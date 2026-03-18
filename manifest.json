@@ -29,18 +29,17 @@
   "contentLanguage": ["tr"],
   "formats": ["mp4", "mkv"]
 },
-{
-  "id": "jetfilmizle",
-  "name": "JetFilmizle",
-  "description": "Türkçe dublaj full HD filmler. jetfilmizle.net üzerinden Pixeldrain mp4 stream sağlar.",
+    {
+  "id": "dizipal",
+  "name": "DiziPal",
+  "description": "Türkçe dublaj ve altyazılı dizi ve filmler. dizipal.bar üzerinden stream sağlar. VTT altyazılar otomatik SRT'ye dönüştürülür.",
   "version": "1.0.0",
   "author": "port: @keyiflerolsun / nuvio: Wekmed",
-  "supportedTypes": ["movie"],
-  "filename": "providers/jetfilmizle.js",
+  "supportedTypes": ["movie", "tv"],
+  "filename": "providers/dizipal.js",
   "enabled": true,
-  "logo": "https://jetfilmizle.net/public/icons/apple-touch-icon.png",
+  "logo": "https://dizipal.bar/wp-content/themes/dizipall/images/logo.png",
   "contentLanguage": ["tr"],
-  "formats": ["mp4", "mkv"],
   "limited": false,
   "disabledPlatforms": []
 },
