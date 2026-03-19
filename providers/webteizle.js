@@ -280,26 +280,23 @@ function fetchDzenStream(dzenUrl) {
 // ── FileMoon extractor ────────────────────────────────────────
 // Akis: filemoon.sx/e/{id} -> iframe -> p,a,c,k,e,d unpack -> sources:[{file:"..."}]
 function jsUnpack(packed) {
-  // p,a,c,k,e,d obfuscation coz
-  var p, a, c, k, e, d;
-  try {
-    var fn = new Function('return ' + packed.replace(/^eval/, ''));
-    var unpacked = fn();
-    return typeof unpacked === 'string' ? unpacked : null;
-  } catch(err) {
-    // Manuel unpack
-    var mArr = packed.match(/\('([^']+)',([0-9]+),([0-9]+),'([^']+)'\./);
-    if (!mArr) return null;
-    p = mArr[1]; a = parseInt(mArr[2]); c = parseInt(mArr[3]);
-    k = mArr[4].split('|'); e = function(c) {
-      return (c < a ? '' : e(Math.floor(c / a))) +
-        ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
-    };
-    if (!(''.replace(/^/, String))) {
-      while (c--) { d = k[c] || e(c); p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), d); }
-    }
-    return p;
+  // p,a,c,k,e,d manuel unpack - Hermes uyumlu (new Function yok)
+  var mArr = packed.match(/\.replace\(.*?\)\)\)$/) ? null :
+    packed.match(/,([0-9]+),([0-9]+),'([^']+)'\.(split|\w+)\('\|'\)/);
+  // Genel pattern: function(p,a,c,k,e,{d}) icindeki p stringi al
+  var pMatch = packed.match(/return p}\('([\s\S]+?)',([0-9]+),([0-9]+),'([^']*)'\./);
+  if (!pMatch) pMatch = packed.match(/\(function\(p,a,c,k,e,[^)]+\)\{[^}]+return p}\('([\s\S]+?)',([0-9]+),([0-9]+),'([^']*)'\./);
+  if (!pMatch) return null;
+  var p = pMatch[1], a = parseInt(pMatch[2]), c = parseInt(pMatch[3]);
+  var k = pMatch[4].split('|');
+  function e(n) {
+    return (n < a ? '' : e(Math.floor(n / a))) +
+      ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
   }
+  while (c--) {
+    if (k[c]) p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), k[c]);
+  }
+  return p;
 }
 
 function fetchFileMoonStream(iframeUrl) {
@@ -437,3 +434,4 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 module.exports = { getStreams: getStreams };
+                                        
