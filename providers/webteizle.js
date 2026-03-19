@@ -176,17 +176,26 @@ function fetchEmbedIframe(embedId) {
   })
   .then(function(r) { return r.text(); })
   .then(function(html) {
+    // iframe src direkt ara
     var m = html.match(/<iframe[^>]+src="([^"]+)"/i);
     if (m) return m[1];
 
-    var sm = html.match(/(vidmoly|okru|filemoon)\s*\(\s*'([^']+)'/i);
+    // JS fonksiyon cagrilari: vidmoly('id','...'), dzen('id','...') vs
+    var sm = html.match(/(vidmoly|okru|filemoon|dzen)\s*\(\s*'([^']+)'/i);
     if (sm) {
       var platform = sm[1].toLowerCase();
       var vid = sm[2];
       if (platform === 'vidmoly')  return 'https://vidmoly.to/embed-' + vid + '.html';
       if (platform === 'okru')     return 'https://odnoklassniki.ru/videoembed/' + vid;
       if (platform === 'filemoon') return 'https://filemoon.sx/e/' + vid;
+      if (platform === 'dzen')     return 'https://dzen.ru/video/watch/' + vid;
     }
+
+    // Dzen URL direkt href/src icinde
+    var dzenM = html.match(/https:\/\/dzen\.ru\/(?:video\/watch|embed)\/([a-f0-9]+)/i);
+    if (dzenM) return 'https://dzen.ru/video/watch/' + dzenM[1];
+
+    console.log('[WebteIzle] dataEmbed response: ' + html.slice(0, 300));
     return null;
   })
   .catch(function() { return null; });
@@ -356,3 +365,4 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 module.exports = { getStreams: getStreams };
+    
