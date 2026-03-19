@@ -276,10 +276,74 @@ function fetchDzenStream(dzenUrl) {
     .catch(function(e) { console.log('[WebteIzle] Dzen hata: ' + e.message); return null; });
 }
 
+
+// ── FileMoon extractor ────────────────────────────────────────
+// Akis: filemoon.sx/e/{id} -> iframe -> p,a,c,k,e,d unpack -> sources:[{file:"..."}]
+function jsUnpack(packed) {
+  // p,a,c,k,e,d obfuscation coz
+  var p, a, c, k, e, d;
+  try {
+    var fn = new Function('return ' + packed.replace(/^eval/, ''));
+    var unpacked = fn();
+    return typeof unpacked === 'string' ? unpacked : null;
+  } catch(err) {
+    // Manuel unpack
+    var mArr = packed.match(/\('([^']+)',([0-9]+),([0-9]+),'([^']+)'\./);
+    if (!mArr) return null;
+    p = mArr[1]; a = parseInt(mArr[2]); c = parseInt(mArr[3]);
+    k = mArr[4].split('|'); e = function(c) {
+      return (c < a ? '' : e(Math.floor(c / a))) +
+        ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
+    };
+    if (!(''.replace(/^/, String))) {
+      while (c--) { d = k[c] || e(c); p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), d); }
+    }
+    return p;
+  }
+}
+
+function fetchFileMoonStream(iframeUrl) {
+  var fullUrl = iframeUrl.startsWith('//') ? 'https:' + iframeUrl : iframeUrl;
+  var origin  = fullUrl.match(/(https?:\/\/[^\/]+)/)[1];
+  var fmHeaders = Object.assign({}, HEADERS, {
+    'Referer':          BASE_URL + '/',
+    'Sec-Fetch-Dest':   'iframe',
+    'Sec-Fetch-Mode':   'navigate',
+    'Sec-Fetch-Site':   'cross-site'
+  });
+
+  return fetch(fullUrl, { headers: fmHeaders })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      // Once iframe ara
+      var iframeM = html.match(/<iframe[^>]+src=['"](https?:\/\/[^'"]+)['"]/i);
+      if (iframeM) {
+        return fetch(iframeM[1], { headers: Object.assign({}, fmHeaders, { 'Referer': fullUrl }) })
+          .then(function(r2) { return r2.text(); });
+      }
+      return html;
+    })
+    .then(function(html) {
+      // p,a,c,k,e,d script bul
+      var packM = html.match(/(eval\(function\(p,a,c,k,e,[^)]*\)[\s\S]+?\)\))/);
+      var unpacked = packM ? jsUnpack(packM[1]) : null;
+      var src = unpacked || html;
+
+      // sources:[{file:"URL"}]
+      var m = src.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*['"](https?:\/\/[^'"]+\.m3u8[^'"]*)['"]/i);
+      if (!m) m = src.match(/file\s*:\s*['"](https?:\/\/[^'"]+\.m3u8[^'"]*)['"]/i);
+      if (!m) { console.log('[WebteIzle] FileMoon m3u8 bulunamadi'); return null; }
+
+      console.log('[WebteIzle] FileMoon m3u8: ' + m[1]);
+      return { url: m[1], type: 'hls', referer: origin + '/' };
+    })
+    .catch(function(e) { console.log('[WebteIzle] FileMoon hata: ' + e.message); return null; });
+}
+
 // ── Embed işle ────────────────────────────────────────────────
 function processEmbed(embedData, dilAd) {
   var baslik = (embedData.baslik || '').toLowerCase();
-  if (baslik === 'pixel' || baslik === 'netu' || baslik === 'filemoon') return Promise.resolve(null);
+  if (baslik === 'pixel' || baslik === 'netu') return Promise.resolve(null);
 
   return fetchEmbedIframe(embedData.id)
     .then(function(src) {
@@ -307,6 +371,14 @@ function processEmbed(embedData, dilAd) {
           if (!s) return null;
           return { url: s.url, name: dilAd, title: 'Dzen', quality: 'Auto', type: s.type,
                    headers: { 'Referer': 'https://dzen.ru/' } };
+        });
+      }
+
+      if (src.indexOf('filemoon') !== -1 || src.indexOf('moonfiles') !== -1 || src.indexOf('bysezoxexe') !== -1) {
+        return fetchFileMoonStream(src).then(function(s) {
+          if (!s) return null;
+          return { url: s.url, name: dilAd, title: 'FileMoon', quality: 'Auto', type: 'hls',
+                   headers: { 'Referer': s.referer || 'https://filemoon.sx/' } };
         });
       }
 
@@ -365,4 +437,3 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 module.exports = { getStreams: getStreams };
-    
