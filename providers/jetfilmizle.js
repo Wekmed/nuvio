@@ -12,18 +12,30 @@ var HEADERS = {
   'Referer': BASE_URL + '/'
 };
 
-function fetchTmdbInfo(tmdbId) {
-  return fetch('https://api.themoviedb.org/3/movie/' + tmdbId
-    + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+function fetchTmdbInfo(tmdbId, mediaType) {
+  // Nuvio bazen film icin 'tv' gonderebilir, once movie dene, 404'te tv dene
+  var mtype = (mediaType || '').toLowerCase();
+  var endpoint = (mtype === 'tv' || mtype === 'series') ? 'tv' : 'movie';
+  var url = 'https://api.themoviedb.org/3/' + endpoint + '/' + tmdbId
+    + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
+  return fetch(url)
+    .then(function(r) {
+      if (!r.ok && endpoint === 'movie') {
+        // movie 404 verdi, tv olarak dene
+        return fetch('https://api.themoviedb.org/3/tv/' + tmdbId
+          + '?api_key=' + TMDB_API_KEY + '&language=tr-TR');
+      }
+      return r;
+    })
     .then(function(r) {
       if (!r.ok) throw new Error('TMDB hata: ' + r.status);
       return r.json();
     })
     .then(function(data) {
       return {
-        titleTr: data.title || '',
-        titleEn: data.original_title || '',
-        year:    (data.release_date || '').slice(0, 4)
+        titleTr: data.title || data.name || '',
+        titleEn: data.original_title || data.original_name || '',
+        year:    (data.release_date || data.first_air_date || '').slice(0, 4)
       };
     });
 }
@@ -194,10 +206,13 @@ function fetchPixeldrainInfo(link) {
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  if (mediaType !== 'movie') return Promise.resolve([]);
-  console.log('[JetFilmizle] getStreams -> tmdbId=' + tmdbId);
+  // JetFilmizle sadece film sitesidir; TV dizisi isteği reddedilir.
+  // Nuvio farkli platformlarda 'movie'/'film'/'Movie' gibi degerler gonderebilir.
+  var mtype = (mediaType || '').toLowerCase();
+  if (mtype === 'tv' || mtype === 'series' || mtype === 'show') return Promise.resolve([]);
+  console.log('[JetFilmizle] getStreams -> tmdbId=' + tmdbId + ' type=' + mediaType);
 
-  return fetchTmdbInfo(tmdbId)
+  return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
       console.log('[JetFilmizle] TMDB: "' + info.titleEn + '" / "' + info.titleTr + '" (' + info.year + ')');
       return findFilmUrl(info.titleTr, info.titleEn);
