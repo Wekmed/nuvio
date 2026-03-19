@@ -206,10 +206,6 @@ function fetchPixeldrainInfo(link) {
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  // JetFilmizle sadece film sitesidir; TV dizisi isteği reddedilir.
-  // Nuvio farkli platformlarda 'movie'/'film'/'Movie' gibi degerler gonderebilir.
-  var mtype = (mediaType || '').toLowerCase();
-  if (mtype === 'tv' || mtype === 'series' || mtype === 'show') return Promise.resolve([]);
   console.log('[JetFilmizle] getStreams -> tmdbId=' + tmdbId + ' type=' + mediaType);
 
   return fetchTmdbInfo(tmdbId, mediaType)
