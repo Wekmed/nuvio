@@ -224,6 +224,49 @@ function fetchSibnetStream(sibnetUrl) {
     .catch(function() { return null; });
 }
 
+// ── Dzen.ru extractor ─────────────────────────────────────────
+// Kaynak: https://dzen.ru/video/watch/{videoKey}
+// Akis:   /embed/{videoKey} -> HTML icinde vdN.okcdn.ru DASH URL
+function fetchDzenStream(dzenUrl) {
+  // watch URL'yi embed URL'ye cevir
+  var videoKey = dzenUrl.split('/').pop().split('?')[0];
+  var embedUrl = 'https://dzen.ru/embed/' + videoKey;
+  console.log('[WebteIzle] Dzen embed: ' + embedUrl);
+
+  return fetch(embedUrl, {
+    headers: Object.assign({}, HEADERS, {
+      'Referer': 'https://dzen.ru/',
+      'Origin':  'https://dzen.ru'
+    })
+  })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      // vdN.okcdn.ru DASH manifest URL'lerini bul
+      var re = /https:\/\/vd\d+\.okcdn\.ru\/\?[^"'\\\s]+/g;
+      var matches = [];
+      var seen = {};
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        var u = m[0];
+        if (!seen[u]) { seen[u] = true; matches.push(u); }
+      }
+      if (matches.length === 0) {
+        // Fallback: genel m3u8 ara
+        var m2 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/i);
+        if (m2) {
+          console.log('[WebteIzle] Dzen m3u8 fallback: ' + m2[0]);
+          return { url: m2[0], type: 'hls', referer: 'https://dzen.ru/' };
+        }
+        console.log('[WebteIzle] Dzen stream bulunamadi');
+        return null;
+      }
+      // Ilk DASH URL'yi kullan
+      console.log('[WebteIzle] Dzen DASH: ' + matches[0]);
+      return { url: matches[0], type: 'direct', referer: 'https://dzen.ru/' };
+    })
+    .catch(function(e) { console.log('[WebteIzle] Dzen hata: ' + e.message); return null; });
+}
+
 // ── Embed işle ────────────────────────────────────────────────
 function processEmbed(embedData, dilAd) {
   var baslik = (embedData.baslik || '').toLowerCase();
@@ -247,6 +290,14 @@ function processEmbed(embedData, dilAd) {
           if (!s) return null;
           return { url: s.url, name: dilAd, title: 'Sibnet', quality: '1080p', type: 'direct',
                    headers: { 'Referer': s.referer || 'https://video.sibnet.ru/' } };
+        });
+      }
+
+      if (src.indexOf('dzen.ru') !== -1) {
+        return fetchDzenStream(src).then(function(s) {
+          if (!s) return null;
+          return { url: s.url, name: dilAd, title: 'Dzen', quality: 'Auto', type: s.type,
+                   headers: { 'Referer': 'https://dzen.ru/' } };
         });
       }
 
