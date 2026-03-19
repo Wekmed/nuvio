@@ -56,6 +56,20 @@
   "formats": ["mp4", "mkv"]
 },
 {
+  "id": "webteizle",
+  "name": "WebteIzle",
+  "description": "Türkçe dublaj ve altyazılı filmler. webteizle3.xyz üzerinden VidMoly/Sibnet stream sağlar.",
+  "version": "1.0.0",
+  "author": "port: @kerimmkirac / nuvio: Wekmed",
+  "supportedTypes": ["movie"],
+  "filename": "providers/webteizle.js",
+  "enabled": true,
+  "logo": "https://webteizle3.xyz/images/logo.png",
+  "contentLanguage": ["tr"],
+  "limited": false,
+  "disabledPlatforms": []
+},
+{
   "id": "filmmodu",
   "name": "FilmModu",
   "description": "Türkçe dublaj ve altyazılı full HD filmler. filmmodu.ws üzerinden stream sağlar.",
