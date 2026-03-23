@@ -8,12 +8,16 @@
   "description": "Türkçe dublaj full HD filmler. jetfilmizle.net üzerinden Pixeldrain mp4 stream sağlar.",
   "version": "1.0.0",
   "author": "port: @keyiflerolsun / nuvio: Wekmed",
-  "supportedTypes": ["movie"],
+  "supportedTypes": [
+    "movie",
+    "film"
+  ],
   "filename": "providers/jetfilmizle.js",
   "enabled": true,
   "logo": "https://jetfilmizle.net/public/icons/apple-touch-icon.png",
-  "contentLanguage": ["tr"],
-  "formats": ["mp4", "mkv"],
+  "contentLanguage": [
+    "tr"
+  ],
   "limited": false,
   "disabledPlatforms": []
 },
@@ -27,7 +31,6 @@
   "filename": "providers/sezonlukdizi.js",
   "enabled": true,
   "contentLanguage": ["tr"],
-  "formats": ["mp4", "mkv"]
 },
     {
   "id": "dizipal",
@@ -53,7 +56,6 @@
   "filename": "providers/sezonlukdizi.js",
   "enabled": true,
   "contentLanguage": ["tr"],
-  "formats": ["mp4", "mkv"]
 },
 {
   "id": "webteizle",
