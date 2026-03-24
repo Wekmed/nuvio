@@ -21,6 +21,24 @@
       "disabledPlatforms": []
     },
     {
+  "id": "m3u_provider",
+  "name": "M3U Birleşik",
+  "description": "birlesik.m3u dosyasından TMDB eşleştirmeli stream. Vidmody, m3u8 ve direkt linkler desteklenir.",
+  "version": "1.0.0",
+  "author": "Wekmed",
+  "supportedTypes": [
+    "movie",
+    "tv"
+  ],
+  "filename": "providers/m3u_provider.js",
+  "enabled": true,
+  "contentLanguage": [
+    "tr"
+  ],
+  "limited": false,
+  "disabledPlatforms": []
+},
+    {
       "id": "jetfilmizle",
       "name": "JetFilmizle",
       "description": "Türkçe dublaj full HD filmler. jetfilmizle.net üzerinden Pixeldrain mp4 stream sağlar.",
