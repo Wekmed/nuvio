@@ -241,11 +241,15 @@ function findMatches(entries, tmdbInfo, tmdbId, posterPath) {
     (matches.length > 0 ? ' (en yüksek skor: ' + matches[0].score + ')' : ''));
 
   // Minimum skor eşiği
-  return matches.filter(function(m) { return m.score >= 2; });
+  return matches.filter(function(m) { return m.score >= 4; });
 }
 
 // ── getStreams ────────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
+  // M3U dosyasinda bolum bazli dizi linki yok — sadece film
+  if (mediaType === 'tv' || mediaType === 'series') {
+    return Promise.resolve([]);
+  }
   console.log('[M3U] getStreams -> tmdbId=' + tmdbId + ' type=' + mediaType);
 
   var tmdbInfo;
