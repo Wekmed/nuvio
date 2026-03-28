@@ -180,32 +180,120 @@ function titleScore(entryTitle, queryTr, queryEn) {
 }
 
 // ── Entry'den stream oluştur ──────────────────────────────────
-function entryToStream(entry) {
-  // Vidmody: direkt URL — Nuvio embed olarak oynatır
-  if (entry.urlType === 'vidmody') {
-    return Promise.resolve({
-      url:     entry.url,
-      name:    entry.group || 'M3U',
-      title:   entry.title,
-      quality: 'Auto',
-      type:    'direct',
-      headers: { 'Referer': 'https://vidmody.com/' }
+// Vidmody master m3u8'den stream'leri çıkar
+// /vs/ttXXX -> master m3u8 -> 1080p + 480p + TR Dublaj + TR Altyazı
+function fetchVidmodyStreams(vidmodyUrl) {
+  // IMDb ID'yi çıkar: /vs/tt0117571 veya /vs/tt0117571/
+  var imdbM = vidmodyUrl.match(/\/vs\/(tt\d+)/i);
+  if (!imdbM) return Promise.resolve([]);
+  var imdbId = imdbM[1];
+  var masterUrl = 'https://vidmody.com/vs/' + imdbId;
+  var base = 'https://vidmody.com';
+
+  console.log('[M3U] Vidmody fetch: ' + masterUrl);
+
+  return fetch(masterUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36',
+      'Referer':    'https://vidmody.com/',
+      'Accept':     '*/*'
+    }
+  })
+  .then(function(r) {
+    if (!r.ok) { console.log('[M3U] Vidmody hata: ' + r.status); return []; }
+    return r.text();
+  })
+  .then(function(m3u8) {
+    if (!m3u8 || m3u8.indexOf('#EXTM3U') === -1) return [];
+
+    var streams = [];
+    var lines = m3u8.split('\n');
+
+    // Audio URL'leri bul
+    var audioTr = null, audioEn = null;
+    lines.forEach(function(l) {
+      var trM = l.match(/NAME="T[üu]rk[çc]e"[^\n]*URI="([^"]+)"/i);
+      if (trM) audioTr = trM[1].startsWith('http') ? trM[1] : base + trM[1];
+      var enM = l.match(/NAME="English"[^\n]*URI="([^"]+)"/i);
+      if (enM) audioEn = enM[1].startsWith('http') ? enM[1] : base + enM[1];
     });
+
+    // Altyazı URL'si
+    var subTr = null;
+    var subM = m3u8.match(/LANGUAGE="tr"[^\n]*URI="([^"]+)"/i);
+    if (subM) subTr = subM[1].startsWith('http') ? subM[1] : base + subM[1];
+
+    // Stream'leri çıkar
+    var qualities = ['1080p', '720p', '480p', '360p'];
+    var qIdx = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+        var nextUrl = lines[i + 1] ? lines[i + 1].trim() : '';
+        if (!nextUrl || nextUrl.indexOf('#') === 0) continue;
+
+        var resM = line.match(/RESOLUTION=(\d+x\d+)/);
+        var quality;
+        if (resM) {
+          var w = parseInt(resM[1].split('x')[0]);
+          if (w >= 1920) quality = '1080p';
+          else if (w >= 1280) quality = '720p';
+          else if (w >= 854)  quality = '480p';
+          else                quality = '360p';
+        } else {
+          quality = qualities[qIdx] || 'Auto';
+        }
+        qIdx++;
+
+        var streamUrl = nextUrl.startsWith('http') ? nextUrl : base + nextUrl;
+
+        // Her kalite için TR Dublaj stream
+        var hdrs = { 'Referer': 'https://vidmody.com/' };
+        streams.push({
+          url:     streamUrl,
+          name:    'TR Dublaj',
+          title:   'Vidmody ' + quality,
+          quality: quality,
+          type:    'hls',
+          headers: hdrs
+        });
+        // TR Altyazı stream (aynı video, farklı ses)
+        streams.push({
+          url:     streamUrl,
+          name:    'TR Altyazı',
+          title:   'Vidmody ' + quality,
+          quality: quality,
+          type:    'hls',
+          headers: hdrs
+        });
+      }
+    }
+
+    console.log('[M3U] Vidmody stream sayisi: ' + streams.length + ' (' + imdbId + ')');
+    return streams;
+  })
+  .catch(function(e) { console.log('[M3U] Vidmody hata: ' + e.message); return []; });
+}
+
+function entryToStream(entry) {
+  // Vidmody: master m3u8 çek, kalite seçenekleri sun
+  if (entry.urlType === 'vidmody') {
+    return fetchVidmodyStreams(entry.url);
   }
 
   // Direkt m3u8 veya pixtures
   if (entry.urlType === 'm3u8' || entry.urlType === 'pixtures' || entry.urlType === 'direct') {
-    return Promise.resolve({
+    return Promise.resolve([{
       url:     entry.url,
       name:    entry.group || 'M3U',
       title:   entry.title,
       quality: 'Auto',
       type:    'hls',
       headers: {}
-    });
+    }]);
   }
 
-  return Promise.resolve(null);
+  return Promise.resolve([]);
 }
 
 // ── Eşleştirme ────────────────────────────────────────────────
@@ -281,8 +369,22 @@ function getStreams(tmdbId, mediaType, season, episode) {
         streamPromises.push(entryToStream(m.entry));
       });
 
-      return Promise.all(streamPromises).then(function(streams) {
-        return streams.filter(Boolean);
+      return Promise.all(streamPromises).then(function(results) {
+        // entryToStream artık array donuyor (single veya multi stream)
+        var all = [];
+        results.forEach(function(r) {
+          if (!r) return;
+          if (Array.isArray(r)) r.forEach(function(s) { if (s) all.push(s); });
+          else all.push(r);
+        });
+        // URL deduplicate
+        var seen = {};
+        return all.filter(function(s) {
+          var k = s.url + '|' + s.name;
+          if (seen[k]) return false;
+          seen[k] = true;
+          return true;
+        });
       });
     })
     .then(function(streams) {
