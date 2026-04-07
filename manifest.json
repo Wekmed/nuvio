@@ -20,6 +20,23 @@
       "limited": false,
       "disabledPlatforms": []
     },
+    {
+      "id": "hdfilmcehennemi",
+      "name": "Hdfilmcehennemi",
+      "description": "Türkçe dublaj ve altyazılı full HD filmler",
+      "version": "1.0.0",
+      "author": "Wekmed",
+      "supportedTypes": [
+        "movie"
+      ],
+      "filename": "providers/hdfilmcehennemi.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
 {
   "id": "m3u_provider",
   "name": "M3U Birleşik",
