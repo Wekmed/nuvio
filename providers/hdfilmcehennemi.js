@@ -365,18 +365,17 @@ function tryCdnHosts(filename, subtitles) {
   });
 }
 
-// M3U8 → stream'lere çevir (Nuvio formatı)
+// M3U8 → stream'lere çevir (Nuvio/Stremio formatı)
 function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles) {
-  var hlsHdrs = {
+  var hlsHeaders = {
     'User-Agent': EMBED_HEADERS['User-Agent'],
-    'Accept':     '*/*',
     'Origin':     'https://hdfilmcehennemi.mobi',
     'Referer':    'https://hdfilmcehennemi.mobi/'
   };
 
-  var lines    = m3u8Text.split('\n').map(function(l) { return l.trim(); });
+  var lines      = m3u8Text.split('\n').map(function(l) { return l.trim(); });
   var audioNames = [];
-  var streams  = [];
+  var streams    = [];
 
   lines.forEach(function(line) {
     var am = line.match(/#EXT-X-MEDIA:.*?NAME="([^"]+)"/i);
@@ -396,60 +395,47 @@ function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles) {
   var hasOrig = audioNames.some(function(n) { return /original/i.test(n); });
   var isDual  = hasTr && hasOrig;
 
-  // TR altyazıları filtrele
-  var trSubs = subtitles.filter(function(s) { return /turkish|türkçe|tr/i.test(s.language); });
-  var enSubs = subtitles.filter(function(s) { return /english|en/i.test(s.language); });
+  // Altyazıları Stremio formatına çevir: {id, url, lang}
+  function toStremioSubs(subList) {
+    return subList.map(function(s, idx) {
+      var langCode = /turkish|türkçe/i.test(s.language) ? 'tur'
+                   : /english/i.test(s.language)        ? 'eng'
+                   : s.language.slice(0, 3).toLowerCase();
+      return { id: 'sub_' + idx, url: s.url, lang: langCode };
+    });
+  }
 
-  var baseHls = { quality: quality, type: 'hls', headers: hlsHdrs };
+  var trSubs   = subtitles.filter(function(s) { return /turkish|türkçe/i.test(s.language); });
+  var enSubs   = subtitles.filter(function(s) { return /english/i.test(s.language); });
+  var allSubs  = subtitles;
+
+  // behaviorHints — ExoPlayer için header gerekli
+  var bh = {
+    notWebReady:  true,
+    proxyHeaders: { request: hlsHeaders }
+  };
+
+  function makeStream(titleStr, subList) {
+    var s = {
+      name:          'HDFC ' + quality,
+      description:   titleStr,
+      url:           masterUrl,
+      behaviorHints: bh
+    };
+    var converted = toStremioSubs(subList);
+    if (converted.length) s.subtitles = converted;
+    return s;
+  }
 
   if (isDual) {
-    // Hem TR hem Orijinal var → DUAL stream + Orijinal stream
-    var dualStream = Object.assign({}, baseHls, {
-      name:  'HDFC ' + quality,
-      title: '⌜ HDFILMCEHENNEMI ⌟ | DUAL | ' + quality,
-      url:   masterUrl
-    });
-    if (trSubs.length) dualStream.subtitles = trSubs;
-    streams.push(dualStream);
-
-    var origStream = Object.assign({}, baseHls, {
-      name:  'HDFC ' + quality,
-      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality,
-      url:   masterUrl
-    });
-    if (enSubs.length) origStream.subtitles = enSubs;
-    else if (subtitles.length) origStream.subtitles = subtitles;
-    streams.push(origStream);
-
+    streams.push(makeStream('⌜ HDFILMCEHENNEMI ⌟ | DUAL | ' + quality, trSubs.length ? trSubs : allSubs));
+    streams.push(makeStream('⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality, enSubs.length ? enSubs : allSubs));
   } else if (hasTr) {
-    // Sadece TR dublaj
-    var trStream = Object.assign({}, baseHls, {
-      name:  'HDFC ' + quality,
-      title: '⌜ HDFILMCEHENNEMI ⌟ | 🇹🇷 TR Dublaj | ' + quality,
-      url:   masterUrl
-    });
-    if (trSubs.length) trStream.subtitles = trSubs;
-    streams.push(trStream);
-
+    streams.push(makeStream('⌜ HDFILMCEHENNEMI ⌟ | 🇹🇷 TR Dublaj | ' + quality, trSubs.length ? trSubs : allSubs));
   } else if (hasOrig) {
-    // Sadece orijinal
-    var origOnlyStream = Object.assign({}, baseHls, {
-      name:  'HDFC ' + quality,
-      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality,
-      url:   masterUrl
-    });
-    if (subtitles.length) origOnlyStream.subtitles = subtitles;
-    streams.push(origOnlyStream);
-
+    streams.push(makeStream('⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality, allSubs));
   } else {
-    // Ses track bilgisi yok
-    var genericStream = Object.assign({}, baseHls, {
-      name:  'HDFC ' + quality,
-      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Video | ' + quality,
-      url:   masterUrl
-    });
-    if (subtitles.length) genericStream.subtitles = subtitles;
-    streams.push(genericStream);
+    streams.push(makeStream('⌜ HDFILMCEHENNEMI ⌟ | 🌐 Video | ' + quality, allSubs));
   }
 
   return streams;
