@@ -109,15 +109,15 @@
       "disabledPlatforms": []
     },
     {
-      "id": "dizilla",
-      "name": "dizilla",
-      "description": "Dizilla.",
+      "id": "cizgimax",
+      "name": "cizgimax",
+      "description": ".",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
         "tv"
       ],
-      "filename": "providers/dizilla.js",
+      "filename": "providers/cizgimax.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
