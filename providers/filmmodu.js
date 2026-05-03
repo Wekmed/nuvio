@@ -141,7 +141,8 @@ function fetchAlternateLinks(filmUrl) {
       $('div.alternates a').each(function() {
         var href = $(this).attr('href') || '';
         var name = $(this).text().trim();
-        if (name && name !== 'Fragman' && name !== 'Türkçe Altyazılı' && href) {
+        // Fragman hariç hepsini al (Türkçe Altyazılı dahil)
+        if (name && name !== 'Fragman' && href) {
           links.push({ href: href, name: name });
         }
       });
