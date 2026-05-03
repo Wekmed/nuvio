@@ -260,12 +260,30 @@ function fetchStreamsFromEmbed(embedUrl, pageReferer) {
       return r.text();
     })
     .then(function(html) {
-      // Altyazılar (track taglarından)
+      // ── Altyazılar: jwplayer tracks dizisinden çek ──
+      // Format: {"file": "https://...vtt", "kind": "captions", "label": "Turkish"}
       var subtitles = [];
-      var trackRe = /"file"\s*:\s*"(https?:\/\/hdfilmcehennemi\.mobi\/vtt\/[^"]+)"\s*,\s*"kind"\s*:\s*"captions"\s*,\s*"label"\s*:\s*"([^"]+)"/gi;
+      var trackRe = /\{\s*["']?file["']?\s*:\s*["'](https?:\/\/hdfilmcehennemi\.mobi\/vtt\/[^"']+)["'][^}]*["']?kind["']?\s*:\s*["']captions["'][^}]*["']?label["']?\s*:\s*["']([^"']+)["']/gi;
       var tm;
       while ((tm = trackRe.exec(html)) !== null) {
         subtitles.push({ url: tm[1], language: tm[2], label: tm[2] });
+      }
+      // Alternatif sıralama (file önce değil)
+      if (!subtitles.length) {
+        var trackRe2 = /["']?label["']?\s*:\s*["']([^"']+)["'][^}]*["']?file["']?\s*:\s*["'](https?:\/\/hdfilmcehennemi\.mobi\/vtt\/[^"']+)["'][^}]*["']?kind["']?\s*:\s*["']captions["']/gi;
+        while ((tm = trackRe2.exec(html)) !== null) {
+          subtitles.push({ url: tm[2], language: tm[1], label: tm[1] });
+        }
+      }
+      // Basit fallback: tüm VTT URL'lerini yakala
+      if (!subtitles.length) {
+        var vttRe = /(https?:\/\/hdfilmcehennemi\.mobi\/vtt\/[^"'\s]+\.vtt)/gi;
+        var vttM;
+        var vttIdx = 0;
+        while ((vttM = vttRe.exec(html)) !== null) {
+          var lang = vttM[1].indexOf('-tr-') !== -1 ? 'Turkish' : vttM[1].indexOf('-en-') !== -1 ? 'English' : 'Sub ' + (++vttIdx);
+          subtitles.push({ url: vttM[1], language: lang, label: lang });
+        }
       }
 
       // ── YOL 1: Obfuscated JS değişkenini decode et ──
@@ -347,7 +365,7 @@ function tryCdnHosts(filename, subtitles) {
   });
 }
 
-// M3U8 → stream'lere çevir (Nuvio formatı: name=film adı, title=kaynak bilgisi)
+// M3U8 → stream'lere çevir (Nuvio formatı)
 function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles) {
   var hlsHdrs = {
     'User-Agent': EMBED_HEADERS['User-Agent'],
@@ -357,12 +375,12 @@ function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles) {
   };
 
   var lines    = m3u8Text.split('\n').map(function(l) { return l.trim(); });
-  var hasAudio = {};
+  var audioNames = [];
   var streams  = [];
 
   lines.forEach(function(line) {
     var am = line.match(/#EXT-X-MEDIA:.*?NAME="([^"]+)"/i);
-    if (am) hasAudio[am[1]] = true;
+    if (am) audioNames.push(am[1]);
   });
 
   var quality = 'Auto';
@@ -374,27 +392,65 @@ function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles) {
     break;
   }
 
-  var base = { quality: quality, type: 'hls', headers: hlsHdrs };
-  if (subtitles.length) base.subtitles = subtitles;
+  var hasTr   = audioNames.some(function(n) { return /turkish|türkçe/i.test(n); });
+  var hasOrig = audioNames.some(function(n) { return /original/i.test(n); });
+  var isDual  = hasTr && hasOrig;
 
-  var hasTr   = hasAudio['Turkish']       || hasAudio['Türkçe'];
-  var hasOrig = hasAudio['Original Audio'] || hasAudio['Original'];
+  // TR altyazıları filtrele
+  var trSubs = subtitles.filter(function(s) { return /turkish|türkçe|tr/i.test(s.language); });
+  var enSubs = subtitles.filter(function(s) { return /english|en/i.test(s.language); });
 
-  if (hasTr)   streams.push(Object.assign({}, base, {
-    name:  'HDFC ' + quality,
-    title: '⌜ HDFILMCEHENNEMI ⌟ | 🇹🇷 TR Dublaj',
-    url:   masterUrl
-  }));
-  if (hasOrig) streams.push(Object.assign({}, base, {
-    name:  'HDFC ' + quality,
-    title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal',
-    url:   masterUrl
-  }));
-  if (!hasTr && !hasOrig) streams.push(Object.assign({}, base, {
-    name:  'HDFC ' + quality,
-    title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Video',
-    url:   masterUrl
-  }));
+  var baseHls = { quality: quality, type: 'hls', headers: hlsHdrs };
+
+  if (isDual) {
+    // Hem TR hem Orijinal var → DUAL stream + Orijinal stream
+    var dualStream = Object.assign({}, baseHls, {
+      name:  'HDFC ' + quality,
+      title: '⌜ HDFILMCEHENNEMI ⌟ | DUAL | ' + quality,
+      url:   masterUrl
+    });
+    if (trSubs.length) dualStream.subtitles = trSubs;
+    streams.push(dualStream);
+
+    var origStream = Object.assign({}, baseHls, {
+      name:  'HDFC ' + quality,
+      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality,
+      url:   masterUrl
+    });
+    if (enSubs.length) origStream.subtitles = enSubs;
+    else if (subtitles.length) origStream.subtitles = subtitles;
+    streams.push(origStream);
+
+  } else if (hasTr) {
+    // Sadece TR dublaj
+    var trStream = Object.assign({}, baseHls, {
+      name:  'HDFC ' + quality,
+      title: '⌜ HDFILMCEHENNEMI ⌟ | 🇹🇷 TR Dublaj | ' + quality,
+      url:   masterUrl
+    });
+    if (trSubs.length) trStream.subtitles = trSubs;
+    streams.push(trStream);
+
+  } else if (hasOrig) {
+    // Sadece orijinal
+    var origOnlyStream = Object.assign({}, baseHls, {
+      name:  'HDFC ' + quality,
+      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Orijinal | ' + quality,
+      url:   masterUrl
+    });
+    if (subtitles.length) origOnlyStream.subtitles = subtitles;
+    streams.push(origOnlyStream);
+
+  } else {
+    // Ses track bilgisi yok
+    var genericStream = Object.assign({}, baseHls, {
+      name:  'HDFC ' + quality,
+      title: '⌜ HDFILMCEHENNEMI ⌟ | 🌐 Video | ' + quality,
+      url:   masterUrl
+    });
+    if (subtitles.length) genericStream.subtitles = subtitles;
+    streams.push(genericStream);
+  }
 
   return streams;
 }
