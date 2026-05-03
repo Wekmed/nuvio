@@ -178,45 +178,139 @@ function buildEpisodeUrl(url, s, e) {
 }
 
 // ── Embed sayfası → CDN URL ───────────────────────────────────
+// Strateji:
+//   1. Embed HTML'inden obfuscated dc_ fonksiyonunu çöz → CDN URL direkt
+//   2. contentUrl JSON-LD'den al (fallback)
+//   3. Thumbnail filename → CDN host denemesi (son fallback)
+
+// Pure-JS base64 decode — atob veya Buffer gerektirmez
+// React Native, Node.js, tarayıcı ortamlarında çalışır
+function _base64Decode(str) {
+  // Önce native yöntemleri dene
+  if (typeof atob === 'function') {
+    try { return atob(str); } catch(e) {}
+  }
+  if (typeof Buffer !== 'undefined') {
+    try { return Buffer.from(str, 'base64').toString('binary'); } catch(e) {}
+  }
+  // Pure-JS fallback (tüm ortamlarda çalışır)
+  var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  var out = '', p = -8, b = 0, c, d;
+  for (var i = 0; i < str.length; i++) {
+    c = chars.indexOf(str[i]);
+    if (c === -1) continue;
+    b = (b << 6) + c;
+    p += 6;
+    if (p >= 0) {
+      d = (b >> p) & 0xFF;
+      out += String.fromCharCode(d);
+      p -= 8;
+    }
+  }
+  return out;
+}
+
+function decodeObfuscatedUrl(html) {
+  // dc_XXXXX fonksiyon tanımını bul
+  var fnMatch = html.match(/function\s+(dc_[a-zA-Z0-9_]+)\s*\(value_parts\)\s*\{([\s\S]*?)\}\s*(?:function\s+d[123]x|var\s+s_)/);
+  if (!fnMatch) return null;
+
+  // Değişken tanımını bul: var s_XXXX = dc_XXXX([...])
+  var varMatch = html.match(/var\s+s_[a-zA-Z0-9_]+\s*=\s*(dc_[a-zA-Z0-9_]+)\s*\(\s*(\[[^\]]+\])\s*\)/);
+  if (!varMatch) return null;
+
+  try {
+    var parts = JSON.parse(varMatch[2]);
+    // Adım 1: Birleştir
+    var v = parts.join('');
+    // Adım 2: ROT13
+    v = v.replace(/[a-zA-Z]/g, function(c) {
+      return String.fromCharCode(
+        (c <= 'Z' ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26
+      );
+    });
+    // Adım 3: Reverse
+    v = v.split('').reverse().join('');
+    // Adım 4: Base64 decode
+    v = _base64Decode(v);
+    // Adım 5: Unmix (399756995 XOR pattern)
+    var unmix = '';
+    for (var i = 0; i < v.length; i++) {
+      var cc = v.charCodeAt(i);
+      cc = (cc - (399756995 % (i + 5)) + 256) % 256;
+      unmix += String.fromCharCode(cc);
+    }
+    if (unmix && unmix.startsWith('http')) return unmix;
+  } catch(e) {
+    // decode başarısız
+  }
+  return null;
+}
 
 function fetchStreamsFromEmbed(embedUrl, pageReferer) {
   var hdrs = Object.assign({}, EMBED_HEADERS, {
     'Referer': pageReferer,
+    'Cookie':  'guide_tooltip_closeloadxx=1',
     'Origin':  pageReferer.split('/').slice(0, 3).join('/')
   });
 
   return fetch(embedUrl, { headers: hdrs })
     .then(function(r) {
       if (!r.ok) throw new Error('Embed HTTP ' + r.status);
-      return r.text().then(function(html) { return { html: html }; });
+      return r.text();
     })
-    .then(function(res) {
-      var html = res.html;
-
-      // Altyazılar
+    .then(function(html) {
+      // Altyazılar (track taglarından)
       var subtitles = [];
-      var tRe = /<track[^>]+>/gi;
+      var trackRe = /"file"\s*:\s*"(https?:\/\/hdfilmcehennemi\.mobi\/vtt\/[^"]+)"\s*,\s*"kind"\s*:\s*"captions"\s*,\s*"label"\s*:\s*"([^"]+)"/gi;
       var tm;
-      while ((tm = tRe.exec(html)) !== null) {
-        var tag  = tm[0];
-        if (tag.indexOf('captions') === -1 && tag.indexOf('subtitles') === -1) continue;
-        var srcM   = tag.match(/\bsrc="([^"]+)"/i);
-        var labelM = tag.match(/\blabel="([^"]+)"/i);
-        if (!srcM) continue;
-        var tUrl = srcM[1].startsWith('http') ? srcM[1] : 'https://hdfilmcehennemi.mobi' + srcM[1];
-        var lang = labelM ? labelM[1] : 'Bilinmeyen';
-        subtitles.push({ url: tUrl, language: lang, label: lang });
+      while ((tm = trackRe.exec(html)) !== null) {
+        subtitles.push({ url: tm[1], language: tm[2], label: tm[2] });
       }
 
-      // Thumbnail'dan dosya adını çıkar
-      var thumbM   = html.match(/hdfilmcehennemi\.mobi\/img\/([^"'\s]+)\.(?:jpg|webp)/i);
-      var filename = thumbM ? thumbM[1] : null;
+      // ── YOL 1: Obfuscated JS değişkenini decode et ──
+      var decodedUrl = decodeObfuscatedUrl(html);
+      if (decodedUrl) {
+        // master.txt URL'ini normalize et
+        var masterUrl = decodedUrl.indexOf('master.txt') !== -1
+          ? decodedUrl
+          : decodedUrl.replace(/\.mp4.*$/, '.mp4/txt/master.txt');
+        return fetchMasterAndBuild(masterUrl, subtitles);
+      }
 
-      // Doğrudan CDN host'larını dene (network'teki gibi)
-      if (!filename) return [];
-      return tryCdnHosts(filename, subtitles);
+      // ── YOL 2: JSON-LD contentUrl ──
+      var contentUrlM = html.match(/"contentUrl"\s*:\s*"([^"]+)"/i);
+      if (contentUrlM && contentUrlM[1].indexOf('.txt') !== -1) {
+        return fetchMasterAndBuild(contentUrlM[1], subtitles);
+      }
+
+      // ── YOL 3: Thumbnail filename → CDN host denemesi (son çare) ──
+      var thumbM = html.match(/hdfilmcehennemi\.mobi\/img\/([^"'\s]+)\.(?:jpg|webp)/i);
+      if (!thumbM) return [];
+      return tryCdnHosts(thumbM[1], subtitles);
     })
     .catch(function() { return []; });
+}
+
+// Direkt master.txt URL'i ile stream oluştur (YOL 1 için)
+function fetchMasterAndBuild(masterUrl, subtitles) {
+  return fetch(masterUrl, {
+    headers: {
+      'User-Agent': EMBED_HEADERS['User-Agent'],
+      'Accept':     '*/*',
+      'Origin':     'https://hdfilmcehennemi.mobi',
+      'Referer':    'https://hdfilmcehennemi.mobi/'
+    }
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('master.txt HTTP ' + r.status);
+    return r.text();
+  })
+  .then(function(m3u8) {
+    if (m3u8.indexOf('#EXTM3U') === -1) throw new Error('Geçersiz m3u8');
+    return buildStreamsFromM3u8(m3u8, masterUrl, subtitles);
+  })
+  .catch(function() { return []; });
 }
 
 // CDN host'larını paralel dene — ilk başarılı olanı al
