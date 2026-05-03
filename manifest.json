@@ -1,6 +1,6 @@
 {
   "name": "Erenxyz",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "scrapers": [
     {
       "id": "filmmodu",
@@ -23,7 +23,7 @@
     {
       "id": "hdfilmcehennemi",
       "name": "Hdfilmcehennemi",
-      "description": "Türkçe dublaj ve altyazılı full HD filmler",
+      "description": "Türkçe dublaj ve altyazılı full HD filmler.",
       "version": "1.0.0",
       "author": "Wekmed",
       "supportedTypes": [
@@ -37,23 +37,23 @@
       "limited": false,
       "disabledPlatforms": []
     },
-{
-  "id": "m3u_provider",
-  "name": "M3U Birleşik",
-  "description": "birlesik.m3u dosyasından TMDB eşleştirmeli stream. Vidmody, m3u8 ve direkt linkler desteklenir.",
-  "version": "1.0.0",
-  "author": "Wekmed",
-  "supportedTypes": [
-    "movie"
-  ],
-  "filename": "providers/m3u_provider.js",
-  "enabled": true,
-  "contentLanguage": [
-    "tr"
-  ],
-  "limited": false,
-  "disabledPlatforms": []
-},
+    {
+      "id": "m3u_provider",
+      "name": "M3U Birleşik",
+      "description": "birlesik.m3u dosyasından TMDB eşleştirmeli stream. Vidmody, m3u8 ve direkt linkler desteklenir.",
+      "version": "1.0.0",
+      "author": "Wekmed",
+      "supportedTypes": [
+        "movie"
+      ],
+      "filename": "providers/m3u_provider.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
     {
       "id": "jetfilmizle",
       "name": "JetFilmizle",
@@ -110,8 +110,8 @@
     },
     {
       "id": "cizgimax",
-      "name": "cizgimax",
-      "description": ".",
+      "name": "CizgiMax",
+      "description": "Türkçe çizgi film ve animasyon dizileri. cizgimax.online üzerinden 500+ içerikle full HD stream sağlar.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
@@ -119,6 +119,25 @@
       ],
       "filename": "providers/cizgimax.js",
       "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=cizgimax.online&sz=64",
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
+    {
+      "id": "dizilla",
+      "name": "Dizilla",
+      "description": "Türkçe altyazılı ve dublaj yabancı diziler. dizilla.to üzerinden 1080p stream sağlar.",
+      "version": "1.0.0",
+      "author": "port: @keyiflerolsun / nuvio: Wekmed",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/dizilla.js",
+      "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=dizilla.to&sz=64",
       "contentLanguage": [
         "tr"
       ],
@@ -128,7 +147,7 @@
     {
       "id": "rectv",
       "name": "RecTv",
-      "description": "Türkçe dublaj ve altyazılı dizi ve filmler.",
+      "description": "Türkçe dublaj ve altyazılı dizi ve filmler. API tabanlı, geniş içerik arşivi.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
