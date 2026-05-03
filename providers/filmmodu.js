@@ -57,39 +57,55 @@ function normalizeForUrl(str) {
     .replace(/[^a-z0-9]/g, '');
 }
 
-// ── En iyi eşleşme ───────────────────────────────────────────
-function findBestMatch(results, searchTitle, year) {
-  var normalizedSearch = normalizeForUrl(searchTitle);
+// ── En iyi eşleşme — skor bazlı ──────────────────────────────
+function normalizeStr(s) {
+  return (s || '').toLowerCase()
+    .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
+    .replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c')
+    .replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim();
+}
 
-  if (year) {
-    for (var i = 0; i < results.length; i++) {
-      var normalizedHref = normalizeForUrl(results[i].href);
-      if (normalizedHref.indexOf(normalizedSearch) !== -1 && results[i].href.indexOf(year) !== -1) {
-        return results[i].href;
-      }
+function findBestMatch(results, titleEn, titleTr, year) {
+  var nEn = normalizeStr(titleEn);
+  var nTr = normalizeStr(titleTr);
+
+  var scored = results.map(function(r) {
+    var score = 0;
+    var nHref = normalizeStr(r.href);
+    var nText = normalizeStr(r.text);
+
+    // Başlık tam eşleşmesi (href içinde)
+    if (nEn && nHref.indexOf(nEn) !== -1) score += 100;
+    else if (nTr && nHref.indexOf(nTr) !== -1) score += 100;
+    // Başlık kelime bazlı eşleşme
+    else if (nEn) {
+      var words = nEn.split(' ').filter(function(w) { return w.length > 2; });
+      var matched = words.filter(function(w) { return nHref.indexOf(w) !== -1; }).length;
+      score += Math.floor(matched / words.length * 60);
     }
-  }
 
-  for (var j = 0; j < results.length; j++) {
-    var normalizedHref2 = normalizeForUrl(results[j].href);
-    if (normalizedHref2.indexOf(normalizedSearch) !== -1) {
-      return results[j].href;
-    }
-  }
+    // Text eşleşmesi
+    if (nEn && nText === nEn) score += 50;
+    else if (nTr && nText === nTr) score += 50;
 
-  if (year) {
-    for (var k = 0; k < results.length; k++) {
-      if (results[k].href.indexOf(year) !== -1) {
-        return results[k].href;
-      }
-    }
-  }
+    // Yıl eşleşmesi — kritik
+    if (year && r.href.indexOf(year) !== -1) score += 80;
+    else if (year) score -= 50; // Yanlış yıl büyük ceza
 
+    return { r: r, score: score };
+  });
+
+  scored.sort(function(a, b) { return b.score - a.score; });
+
+  // En az 50 puan olan ilk sonucu döndür
+  if (scored.length && scored[0].score >= 50) return scored[0].r.href;
   return null;
 }
 
 // ── FilmModu'nda arama ───────────────────────────────────────
-function searchFilmModu(title, year) {
+function searchFilmModu(info) {
+  var title    = info.titleEn || info.titleTr;
+  var year     = info.year;
   var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
 
   return fetch(searchUrl, { headers: HEADERS, redirect: 'follow' })
@@ -122,7 +138,7 @@ function searchFilmModu(title, year) {
       });
 
       if (results.length === 0) return null;
-      return findBestMatch(results, title, year);
+      return findBestMatch(results, info.titleEn, info.titleTr, year);
     });
 }
 
@@ -206,21 +222,24 @@ function fetchStreamsFromAlt(altLink, filmUrl, movieTitle) {
             if (srcUrl.indexOf('.m3u8') === -1) srcUrl = srcUrl + '.m3u8';
 
             var streamObj = {
-              name:    movieTitle,
-              title:   '⌜ FILMMODU ⌟ | ' + altLink.name + ' | ' + qualityLabel,
-              url:     srcUrl,
-              quality: qualityLabel,
-              type:    'hls',
-              headers: {
-                'Referer':    BASE_URL + '/',
-                'User-Agent': HEADERS['User-Agent']
+              name:        movieTitle,
+              description: '⌜ FILMMODU ⌟ | ' + altLink.name + ' | ' + qualityLabel,
+              url:         srcUrl,
+              behaviorHints: {
+                notWebReady:  true,
+                proxyHeaders: {
+                  request: {
+                    'Referer':    BASE_URL + '/',
+                    'User-Agent': HEADERS['User-Agent']
+                  }
+                }
               }
             };
             if (subtitleUrl) {
               streamObj.subtitles = [{
-                url:      subtitleUrl,
-                language: 'Türkçe',
-                label:    'Türkçe'
+                id:   'sub_tr_0',
+                url:  subtitleUrl,
+                lang: 'tur'
               }];
             }
             streams.push(streamObj);
@@ -242,10 +261,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
       var movieTitle = info.titleTr || info.titleEn;
 
-      return searchFilmModu(info.titleEn, info.year)
+      // Önce İngilizce başlıkla ara, bulamazsa Türkçe ile
+      return searchFilmModu(info)
         .then(function(filmUrl) {
           if (!filmUrl && info.titleTr && info.titleTr !== info.titleEn) {
-            return searchFilmModu(info.titleTr, info.year);
+            return searchFilmModu({ titleEn: info.titleTr, titleTr: info.titleEn, year: info.year });
           }
           return filmUrl;
         })
