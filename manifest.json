@@ -109,18 +109,17 @@
       "disabledPlatforms": []
     },
     {
-      "id": "dizipal",
-      "name": "DiziPal",
-      "description": "Türkçe dublaj ve altyazılı dizi ve filmler. dizipal.bar üzerinden stream sağlar. VTT altyazılar otomatik SRT'ye dönüştürülür.",
+      "id": "rectv",
+      "name": "RecTv",
+      "description": "Türkçe dublaj ve altyazılı dizi ve filmler.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/dizipal.js",
+      "filename": "providers/rectv.js",
       "enabled": true,
-      "logo": "https://dizipal.bar/wp-content/themes/dizipall/images/logo.png",
       "contentLanguage": [
         "tr"
       ],
