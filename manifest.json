@@ -109,6 +109,23 @@
       "disabledPlatforms": []
     },
     {
+      "id": "dizilla",
+      "name": "dizilla",
+      "description": "Dizilla.",
+      "version": "1.0.0",
+      "author": "port: @keyiflerolsun / nuvio: Wekmed",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/dizilla.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
+    {
       "id": "rectv",
       "name": "RecTv",
       "description": "Türkçe dublaj ve altyazılı dizi ve filmler.",
