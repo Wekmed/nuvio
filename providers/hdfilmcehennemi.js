@@ -534,4 +534,4 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { getStreams: getStreams };
 } else {
   global.getStreams = getStreams;
-                    }
+}
