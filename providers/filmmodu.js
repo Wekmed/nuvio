@@ -1,7 +1,6 @@
 // ============================================================
 //  FilmModu — Nuvio Provider
 //  Sadece Film (movie) destekler
-//  Sadece 1080p ve üzeri kaynaklar gösterilir
 // ============================================================
 
 var BASE_URL = 'https://www.filmmodu.one';
@@ -222,9 +221,9 @@ function fetchStreamsFromAlt(altLink, filmUrl, movieTitle) {
             if (srcUrl.indexOf('.m3u8') === -1) srcUrl = srcUrl + '.m3u8';
 
             var streamObj = {
-              name:        movieTitle,
-              description: '⌜ FILMMODU ⌟ | ' + altLink.name + ' | ' + qualityLabel,
-              url:         srcUrl,
+              name:  movieTitle,
+              title: '⌜ FILMMODU ⌟ | ' + altLink.name + ' | ' + qualityLabel,
+              url:   srcUrl,
               behaviorHints: {
                 notWebReady:  true,
                 proxyHeaders: {
