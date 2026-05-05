@@ -127,17 +127,16 @@
       "disabledPlatforms": []
     },
     {
-      "id": "dizilla",
-      "name": "Dizilla",
-      "description": "Türkçe altyazılı ve dublaj yabancı diziler. dizilla.to üzerinden 1080p stream sağlar.",
+      "id": "filmmakinesi",
+      "name": "Filmmakinesi",
+      "description": "Türkçe altyazılı ve dublaj yabancı diziler.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
-        "tv"
+        "movie"
       ],
-      "filename": "providers/dizilla.js",
+      "filename": "providers/filmmakinesi.js",
       "enabled": true,
-      "logo": "https://www.google.com/s2/favicons?domain=dizilla.to&sz=64",
       "contentLanguage": [
         "tr"
       ],
