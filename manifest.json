@@ -1,6 +1,6 @@
 {
   "name": "Erenxyz",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "scrapers": [
     {
       "id": "filmmodu",
@@ -101,6 +101,23 @@
         "tv"
       ],
       "filename": "providers/sezonlukdizi.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
+        {
+      "id": "filmmakinesi",
+      "name": "Filmmakinesi",
+      "description": "Türkçe altyazılı ve dublaj yabancı diziler.",
+      "version": "1.0.0",
+      "author": "port: @keyiflerolsun / nuvio: Wekmed",
+      "supportedTypes": [
+        "movie"
+      ],
+      "filename": "providers/filmmakinesi.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
