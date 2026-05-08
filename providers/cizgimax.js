@@ -2,14 +2,15 @@
 //  CizgiMax — Nuvio Provider
 // ============================================================
 
-var MAIN_URL     = 'https://cizgimax.online';
-var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+const nodeCrypto = require('crypto');
 
-var HEADERS = {
+const MAIN_URL     = 'https://cizgimax.online';
+const TMDB_API_KEY = '4ef0d7355d9ffb5151e987764708ce96';
+
+const HEADERS = {
   'User-Agent':      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
   'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-  'Referer':         MAIN_URL + '/'
 };
 
 // ── Yardımcılar ───────────────────────────────────────────────
@@ -22,6 +23,24 @@ function fixUrl(url) {
   return MAIN_URL + '/' + url;
 }
 
+// Cookie birleştir — response'dan yeni cookie'leri alıp mevcutlarla merge et
+function mergeCookies(response, existing) {
+  const setCookies = response.headers.getSetCookie ? response.headers.getSetCookie() : [];
+  const map = {};
+  if (existing) {
+    existing.split('; ').forEach(function(c) {
+      const idx = c.indexOf('=');
+      if (idx > 0) map[c.slice(0, idx).trim()] = c.slice(idx + 1);
+    });
+  }
+  setCookies.forEach(function(c) {
+    const kv  = c.split(';')[0];
+    const idx = kv.indexOf('=');
+    if (idx > 0) map[kv.slice(0, idx).trim()] = kv.slice(idx + 1);
+  });
+  return Object.entries(map).map(function(e) { return e[0] + '=' + e[1]; }).join('; ');
+}
+
 function getHtml(url, extraHeaders) {
   return fetch(url, {
     headers: Object.assign({}, HEADERS, extraHeaders || {})
@@ -31,9 +50,13 @@ function getHtml(url, extraHeaders) {
   });
 }
 
-function reFind(html, pattern) {
-  var m = html.match(pattern);
-  return m ? m[1] : null;
+function getHtmlWithResponse(url, extraHeaders) {
+  return fetch(url, {
+    headers: Object.assign({}, HEADERS, extraHeaders || {})
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + url);
+    return r.text().then(function(html) { return { html: html, response: r }; });
+  });
 }
 
 // ── TMDB ─────────────────────────────────────────────────────
@@ -44,8 +67,7 @@ function fetchTmdbInfo(tmdbId) {
     .then(function(d) {
       return {
         titleTr: d.name || '',
-        titleEn: d.original_name || '',
-        year:    (d.first_air_date || '').slice(0, 4)
+        titleEn: d.original_name || ''
       };
     });
 }
@@ -53,7 +75,7 @@ function fetchTmdbInfo(tmdbId) {
 // ── Arama ────────────────────────────────────────────────────
 function searchCizgiMax(query) {
   return fetch(MAIN_URL + '/ajaxservice/index.php?qr=' + encodeURIComponent(query), {
-    headers: HEADERS
+    headers: Object.assign({}, HEADERS, { 'Referer': MAIN_URL + '/' })
   })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -85,254 +107,166 @@ function findBestMatch(items, titleEn, titleTr) {
   return (scored.length && scored[0].score >= 60) ? scored[0].item : null;
 }
 
-// ── Sezon/Bölüm parse ─────────────────────────────────────────
-// URL'den çıkar: /big-city-greens-1-sezon-2-bolum-izle/ → {season:1, episode:2}
-function extractSeasonEpisodeFromUrl(url) {
-  var s = 1, e = 1;
+// ── Sezon/Bölüm URL'den çıkar ─────────────────────────────────
+// Debug'da doğrulandı: /slug-X-sezon-Y-bolum[-izle]/
+// Karma slug: big-city-greens-1-sezon-1-bolum-izle (İngilizce)
+//             greenlerin-buyuksehir-maceralari-4-sezon-30-bolum (Türkçe)
+function extractSE(url) {
   var sm = url.match(/-(\d+)-sezon-/i);
   var em = url.match(/-sezon-(\d+)-bolum/i);
-  if (sm) s = parseInt(sm[1]);
-  if (em) e = parseInt(em[1]);
-  return { season: s, episode: e };
+  return {
+    season:  sm ? parseInt(sm[1]) : 1,
+    episode: em ? parseInt(em[1]) : 0
+  };
 }
 
-// ── Dizi sayfasından bölüm linkleri ──────────────────────────
-// MHT'den doğrulandı: <a href="..." class="episode-link episode-list">
+// ── Dizi sayfasından bölüm listesi ────────────────────────────
 function fetchShowEpisodes(showUrl) {
-  return getHtml(showUrl).then(function(html) {
+  return getHtml(showUrl, { 'Referer': MAIN_URL + '/' }).then(function(html) {
     var episodes = [];
-    // class="episode-link episode-list" olan tüm a etiketleri
-    var re = /<a[^>]+href="([^"]+)"[^>]*class="[^"]*episode-link[^"]*"[^>]*>/gi;
+    var seen     = {};
+    var re       = /href="([^"]+)"/gi;
     var m;
     while ((m = re.exec(html)) !== null) {
-      var href = fixUrl(m[1]);
-      var se   = extractSeasonEpisodeFromUrl(href);
-      if (se.episode > 0) {
-        episodes.push({ season: se.season, episode: se.episode, url: href });
-      }
+      var href = m[1].startsWith('http') ? m[1] : MAIN_URL + m[1];
+      if (seen[href]) continue;
+      if (href.indexOf('sezon') === -1 || href.indexOf('bolum') === -1) continue;
+      seen[href] = true;
+      var se = extractSE(href);
+      if (se.episode > 0) episodes.push({ season: se.season, episode: se.episode, url: href });
     }
-
-    // Alternatif: class sırası farklı olabilir
-    if (!episodes.length) {
-      var re2 = /<a[^>]+class="[^"]*episode-link[^"]*"[^>]+href="([^"]+)"[^>]*>/gi;
-      while ((m = re2.exec(html)) !== null) {
-        var href = fixUrl(m[1]);
-        var se   = extractSeasonEpisodeFromUrl(href);
-        if (se.episode > 0) {
-          episodes.push({ season: se.season, episode: se.episode, url: href });
-        }
-      }
-    }
-
-    console.log('[CizgiMax] Bölüm listesi: ' + episodes.length + ' bölüm');
+    console.log('[CizgiMax] ' + episodes.length + ' bölüm bulundu');
     return episodes;
   });
 }
 
-// ── Bölüm sayfasından CizgiPass embed URL'i al ───────────────
-// MHT'den doğrulandı:
-// <ul class="linkler"><li class="belink">
-//   <a data-frame="https://cizgipass100.online/embed/x35d3MeRBvrsirQ" class="post-page-numbers">CIZGIMAX+</a>
-// </li></ul>
-function fetchCizgipassUrl(epUrl) {
-  return getHtml(epUrl, { 'Referer': MAIN_URL + '/' }).then(function(html) {
-    // 1. ul.linkler içinde data-frame (doğrulanmış yapı)
-    var m = html.match(/class="linkler"[\s\S]{0,500}?data-frame="(https?:\/\/cizgipass[^"]+)"/i);
-    if (m) return m[1];
-
-    // 2. Herhangi bir data-frame ile cizgipass URL'i
-    m = html.match(/data-frame="(https?:\/\/cizgipass[^"]+)"/i);
-    if (m) return m[1];
-
-    // 3. iframe src ile
-    m = html.match(/<iframe[^>]+src="(https?:\/\/cizgipass[^"]+)"/i);
-    if (m) return m[1];
-
-    // 4. Herhangi bir cizgipass embed URL'i
-    m = html.match(/(https?:\/\/cizgipass\d*\.online\/embed\/[a-zA-Z0-9]+)/i);
-    if (m) return m[1];
-
-    return null;
+// ── Bölüm sayfasından embed URL + ilk cookie ─────────────────
+function fetchEpisodeEmbed(epUrl) {
+  return fetch(epUrl, {
+    headers: Object.assign({}, HEADERS, { 'Referer': MAIN_URL + '/' })
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + epUrl);
+    var cookies = mergeCookies(r, '');
+    return r.text().then(function(html) {
+      var m = html.match(/data-frame="(https?:\/\/cizgipass[^"]+)"/i)
+           || html.match(/class="linkler"[\s\S]{0,600}?data-frame="([^"]+)"/i)
+           || html.match(/(https?:\/\/cizgipass\d*\.online\/embed\/[a-zA-Z0-9]+)/i);
+      if (!m) throw new Error('Embed URL bulunamadı');
+      return { embedUrl: m[1], cookies: cookies };
+    });
   });
 }
 
-// ── MD5 (crypto.subtle MD5 desteklemediği için) ───────────────
-function md5(data) {
-  function sa(x,y){var l=(x&0xFFFF)+(y&0xFFFF);return((x>>16)+(y>>16)+(l>>16))<<16|(l&0xFFFF);}
-  function rol(n,s){return n<<s|n>>>(32-s);}
-  function cmn(q,a,b,x,s,t){return sa(rol(sa(sa(a,q),sa(x,t)),s),b);}
-  function ff(a,b,c,d,x,s,t){return cmn((b&c)|(~b&d),a,b,x,s,t);}
-  function gg(a,b,c,d,x,s,t){return cmn((b&d)|(c&~d),a,b,x,s,t);}
-  function hh(a,b,c,d,x,s,t){return cmn(b^c^d,a,b,x,s,t);}
-  function ii(a,b,c,d,x,s,t){return cmn(c^(b|~d),a,b,x,s,t);}
-
-  var len=data.length, words=[];
-  for(var i=0;i<(len>>2)+4;i++) words[i]=0;
-  for(var i=0;i<len;i++) words[i>>2]|=data[i]<<(i%4*8);
-  words[len>>2]|=0x80<<(len%4*8);
-  words[((len+72>>6)<<4)+14]=len*8;
-
-  var a=0x67452301,b=0xEFCDAB89,c=0x98BADCFE,d=0x10325476;
-  for(var i=0;i<words.length;i+=16){
-    var A=a,B=b,C=c,D=d;
-    a=ff(a,b,c,d,words[i+0],7,-680876936);    b=ff(d,a,b,c,words[i+1],12,-389564586);
-    c=ff(c,d,a,b,words[i+2],17,606105819);    d=ff(b,c,d,a,words[i+3],22,-1044525330);
-    a=ff(a,b,c,d,words[i+4],7,-176418897);    b=ff(d,a,b,c,words[i+5],12,1200080426);
-    c=ff(c,d,a,b,words[i+6],17,-1473231341);  d=ff(b,c,d,a,words[i+7],22,-45705983);
-    a=ff(a,b,c,d,words[i+8],7,1770035416);    b=ff(d,a,b,c,words[i+9],12,-1958414417);
-    c=ff(c,d,a,b,words[i+10],17,-42063);      d=ff(b,c,d,a,words[i+11],22,-1990404162);
-    a=ff(a,b,c,d,words[i+12],7,1804603682);   b=ff(d,a,b,c,words[i+13],12,-40341101);
-    c=ff(c,d,a,b,words[i+14],17,-1502002290); d=ff(b,c,d,a,words[i+15],22,1236535329);
-    a=gg(a,b,c,d,words[i+1],5,-165796510);    b=gg(d,a,b,c,words[i+6],9,-1069501632);
-    c=gg(c,d,a,b,words[i+11],14,643717713);   d=gg(b,c,d,a,words[i+0],20,-373897302);
-    a=gg(a,b,c,d,words[i+5],5,-701558691);    b=gg(d,a,b,c,words[i+10],9,38016083);
-    c=gg(c,d,a,b,words[i+15],14,-660478335);  d=gg(b,c,d,a,words[i+4],20,-405537848);
-    a=gg(a,b,c,d,words[i+9],5,568446438);     b=gg(d,a,b,c,words[i+14],9,-1019803690);
-    c=gg(c,d,a,b,words[i+3],14,-187363961);   d=gg(b,c,d,a,words[i+8],20,1163531501);
-    a=gg(a,b,c,d,words[i+13],5,-1444681467);  b=gg(d,a,b,c,words[i+2],9,-51403784);
-    c=gg(c,d,a,b,words[i+7],14,1735328473);   d=gg(b,c,d,a,words[i+12],20,-1926607734);
-    a=hh(a,b,c,d,words[i+5],4,-378558);       b=hh(d,a,b,c,words[i+8],11,-2022574463);
-    c=hh(c,d,a,b,words[i+11],16,1839030562);  d=hh(b,c,d,a,words[i+14],23,-35309556);
-    a=hh(a,b,c,d,words[i+1],4,-1530992060);   b=hh(d,a,b,c,words[i+4],11,1272893353);
-    c=hh(c,d,a,b,words[i+7],16,-155497632);   d=hh(b,c,d,a,words[i+10],23,-1094730640);
-    a=hh(a,b,c,d,words[i+13],4,681279174);    b=hh(d,a,b,c,words[i+0],11,-358537222);
-    c=hh(c,d,a,b,words[i+3],16,-722521979);   d=hh(b,c,d,a,words[i+6],23,76029189);
-    a=hh(a,b,c,d,words[i+9],4,-640364487);    b=hh(d,a,b,c,words[i+12],11,-421815835);
-    c=hh(c,d,a,b,words[i+15],16,530742520);   d=hh(b,c,d,a,words[i+2],23,-995338651);
-    a=ii(a,b,c,d,words[i+0],6,-198630844);    b=ii(d,a,b,c,words[i+7],10,1126891415);
-    c=ii(c,d,a,b,words[i+14],15,-1416354905); d=ii(b,c,d,a,words[i+5],21,-57434055);
-    a=ii(a,b,c,d,words[i+12],6,1700485571);   b=ii(d,a,b,c,words[i+3],10,-1894986606);
-    c=ii(c,d,a,b,words[i+10],15,-1051523);    d=ii(b,c,d,a,words[i+1],21,-2054922799);
-    a=ii(a,b,c,d,words[i+8],6,1873313359);    b=ii(d,a,b,c,words[i+15],10,-30611744);
-    c=ii(c,d,a,b,words[i+6],15,-1560198380);  d=ii(b,c,d,a,words[i+13],21,1309151649);
-    a=ii(a,b,c,d,words[i+4],6,-145523070);    b=ii(d,a,b,c,words[i+11],10,-1120210379);
-    c=ii(c,d,a,b,words[i+2],15,718787259);    d=ii(b,c,d,a,words[i+9],21,-343485551);
-    a=sa(a,A);b=sa(b,B);c=sa(c,C);d=sa(d,D);
-  }
-  var out=new Uint8Array(16);
-  for(var i=0;i<4;i++){out[i]=(a>>i*8)&0xFF;out[i+4]=(b>>i*8)&0xFF;out[i+8]=(c>>i*8)&0xFF;out[i+12]=(d>>i*8)&0xFF;}
-  return out;
-}
-
-// ── OpenSSL EVP_BytesToKey ────────────────────────────────────
-function evpBytesToKey(password, salt) {
-  var p = new TextEncoder().encode(password);
-  var s = salt || new Uint8Array(0);
-  function cat(){
-    var args=Array.prototype.slice.call(arguments),len=0;
-    args.forEach(function(a){len+=a.length;});
-    var out=new Uint8Array(len),off=0;
-    args.forEach(function(a){out.set(a,off);off+=a.length;});
-    return out;
-  }
-  var d0=md5(cat(p,s));
-  var d1=md5(cat(d0,p,s));
-  var d2=md5(cat(d1,p,s));
-  return { key: cat(d0,d1), iv: d2.slice(0,16) };
+// ── EVP_BytesToKey (node:crypto MD5) ─────────────────────────
+// Debug ile doğrulandı: EVP IV == JSON IV → key doğru
+function evpBytesToKey(password, saltHex) {
+  var p  = Buffer.from(password);
+  var s  = Buffer.from(saltHex || '', 'hex');
+  var d0 = nodeCrypto.createHash('md5').update(Buffer.concat([p, s])).digest();
+  var d1 = nodeCrypto.createHash('md5').update(Buffer.concat([d0, p, s])).digest();
+  var d2 = nodeCrypto.createHash('md5').update(Buffer.concat([d1, p, s])).digest();
+  return { key: Buffer.concat([d0, d1]), iv: d2.slice(0, 16) };
 }
 
 // ── BePlayer AES-256-CBC Decrypt ─────────────────────────────
-// Network'ten doğrulanan format: {"ct":"BASE64","iv":"HEX32","s":"HEX16"}
+// Debug ile doğrulandı: node:crypto çalışıyor, crypto.subtle çalışmıyor
 function bePlayerDecrypt(password, encryptedJson) {
-  var parsed;
-  try { parsed = JSON.parse(encryptedJson); }
-  catch(e) { return Promise.reject(new Error('JSON parse hatası: ' + e.message)); }
-
-  // ct → bytes
-  var ctRaw = atob(parsed.ct);
-  var ct    = new Uint8Array(ctRaw.length);
-  for (var i = 0; i < ctRaw.length; i++) ct[i] = ctRaw.charCodeAt(i);
-
-  // iv → bytes (hex)
-  var iv = new Uint8Array(16);
-  for (var i = 0; i < 16; i++) iv[i] = parseInt(parsed.iv.slice(i*2, i*2+2), 16);
-
-  // salt → bytes (hex, 8 byte) + EVP ile key türet
-  var salt = new Uint8Array(8);
-  if (parsed.s) {
-    for (var i = 0; i < 8; i++) salt[i] = parseInt(parsed.s.slice(i*2, i*2+2), 16);
+  try {
+    var parsed   = JSON.parse(encryptedJson);
+    var ct       = Buffer.from(parsed.ct, 'base64');
+    var iv       = Buffer.from(parsed.iv, 'hex');
+    var derived  = evpBytesToKey(password, parsed.s || '');
+    var decipher = nodeCrypto.createDecipheriv('aes-256-cbc', derived.key, iv);
+    decipher.setAutoPadding(true);
+    var dec = Buffer.concat([decipher.update(ct), decipher.final()]);
+    return { ok: true, data: JSON.parse(dec.toString('utf8')) };
+  } catch(e) {
+    return { ok: false, error: e.message };
   }
-
-  var derived = evpBytesToKey(password, salt);
-
-  return crypto.subtle.importKey('raw', derived.key, { name: 'AES-CBC' }, false, ['decrypt'])
-    .then(function(key) {
-      return crypto.subtle.decrypt({ name: 'AES-CBC', iv: iv }, key, ct);
-    })
-    .then(function(buf) {
-      var bytes = new Uint8Array(buf);
-      var pad   = bytes[bytes.length - 1];
-      if (pad > 0 && pad <= 16) bytes = bytes.slice(0, bytes.length - pad);
-      return new TextDecoder().decode(bytes);
-    });
 }
 
-// ── CizgiPass embed'den stream çek ───────────────────────────
-function extractFromCizgipass(embedUrl) {
+// ── Embed'den stream çek ──────────────────────────────────────
+// Debug'da doğrulandı:
+//   1. Embed fetch → PHPSESSID cookie al
+//   2. bePlayer decrypt → video_location = /list/BASE64
+//   3. /list/ fetch → cookie + embed Referer → 200 + m3u8
+function extractFromEmbed(embedUrl, cookies) {
   var label = '⌜ CİZGİMAX ⌟';
 
   return fetch(embedUrl, {
     headers: Object.assign({}, HEADERS, {
       'Referer':        MAIN_URL + '/',
+      'Cookie':         cookies,
       'sec-fetch-dest': 'iframe',
       'sec-fetch-mode': 'navigate',
       'sec-fetch-site': 'cross-site'
     })
   })
-    .then(function(r) { return r.text(); })
-    .then(function(html) {
-      // bePlayer('PASS', '{"ct":"...","iv":"...","s":"..."}')
-      var m = html.match(/bePlayer\s*\(\s*'([^']+)'\s*,\s*'(\{[^']+\})'\s*\)/)
-           || html.match(/bePlayer\s*\(\s*"([^"]+)"\s*,\s*"(\{[^"]+\})"\s*\)/);
+    .then(function(r) {
+      if (!r.ok) throw new Error('Embed HTTP ' + r.status);
+      // Cookie'leri birleştir — PHPSESSID burada geliyor
+      var newCookies = mergeCookies(r, cookies);
+      return r.text().then(function(html) {
+        return { html: html, cookies: newCookies };
+      });
+    })
+    .then(function(res) {
+      var html       = res.html;
+      var newCookies = res.cookies;
+
+      // bePlayer parse
+      var m = html.match(/bePlayer\s*\(\s*'([^']+)'\s*,\s*'(\{[^']*"ct"[^']*\})'\s*\)/)
+           || html.match(/bePlayer\s*\(\s*"([^"]+)"\s*,\s*"(\{[^"]*"ct"[^"]*\})"\s*\)/);
 
       if (!m) {
-        console.log('[CizgiMax] bePlayer bulunamadı: ' + embedUrl);
+        console.log('[CizgiMax] bePlayer bulunamadı');
         return null;
       }
 
-      var pass = m[1];
-      var enc  = m[2];
-      console.log('[CizgiMax] bePlayer bulundu, çözülüyor...');
+      var result = bePlayerDecrypt(m[1], m[2]);
+      if (!result.ok) {
+        console.error('[CizgiMax] Decrypt hata:', result.error);
+        return null;
+      }
 
-      return bePlayerDecrypt(pass, enc)
-        .then(function(decrypted) {
-          var videoUrl = null;
-          var subs     = [];
+      var data     = result.data;
+      var videoUrl = data.video_location || data.file || data.src;
+      var subs     = [];
 
-          try {
-            var data = JSON.parse(decrypted);
-            videoUrl = data.video_location
-              || (data.schedule && reFind(String(data.schedule.client || ''), /"video_location":"([^"]+)"/))
-              || data.file || data.src;
+      (data.strSubtitles || []).forEach(function(sub) {
+        if (sub.file && sub.label && sub.label.indexOf('Forced') === -1)
+          subs.push({ label: sub.label.toUpperCase(), url: sub.file });
+      });
 
-            (data.strSubtitles || []).forEach(function(sub) {
-              if (sub.file && sub.label && sub.label.indexOf('Forced') === -1)
-                subs.push({ label: sub.label.toUpperCase(), url: sub.file });
-            });
-          } catch(e) {
-            videoUrl = reFind(decrypted, /"video_location"\s*:\s*"([^"]+)"/);
-          }
+      if (!videoUrl) {
+        console.log('[CizgiMax] video_location yok');
+        return null;
+      }
 
-          if (!videoUrl) { console.log('[CizgiMax] video_location yok'); return null; }
+      if (videoUrl.startsWith('/')) videoUrl = 'https://cizgipass100.online' + videoUrl;
+      console.log('[CizgiMax] ✓ Stream: ' + videoUrl.slice(0, 80));
 
-          // /list/BASE64 → tam URL
-          if (videoUrl.startsWith('/')) videoUrl = 'https://cizgipass100.online' + videoUrl;
-
-          console.log('[CizgiMax] ✓ Stream: ' + videoUrl.slice(0, 60) + '...');
-
-          return {
-            url:       videoUrl,
-            name:      label,
-            title:     label + (subs.length ? ' | ' + subs.map(function(s){ return s.label; }).join('/') : ''),
-            quality:   'Auto',
-            type:      'hls',
-            headers:   { 'Referer': 'https://cizgipass100.online/' },
-            subtitles: subs
-          };
-        })
-        .catch(function(e) { console.error('[CizgiMax] Decrypt:', e.message); return null; });
+      // /list/ URL'ini döndür — headers ile birlikte
+      // Nuvio bu URL'i kendi HTTP client'ı ile açacak
+      return {
+        url:       videoUrl,
+        name:      label,
+        title:     label + (subs.length ? ' | ' + subs.map(function(s) { return s.label; }).join('/') : ''),
+        quality:   'Auto',
+        type:      'hls',
+        // Debug'da doğrulandı: embed URL Referer + PHPSESSID cookie şart
+        headers:   {
+          'Referer': embedUrl,
+          'Cookie':  newCookies,
+          'Origin':  'https://cizgipass100.online'
+        },
+        subtitles: subs
+      };
     })
-    .catch(function(e) { console.error('[CizgiMax] Embed fetch:', e.message); return null; });
+    .catch(function(e) {
+      console.error('[CizgiMax] extractFromEmbed hata:', e.message);
+      return null;
+    });
 }
 
 // ── Ana fonksiyon ─────────────────────────────────────────────
@@ -365,16 +299,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             ? (best.s_link.startsWith('http') ? best.s_link : fixUrl(best.s_link))
             : null;
           if (!showUrl) return [];
-
           console.log('[CizgiMax] Dizi: ' + best.s_name + ' → ' + showUrl);
 
           return fetchShowEpisodes(showUrl)
             .then(function(episodes) {
-              // Sezon + bölüm eşleşmesi
+              // S+E birebir eşleştir
               var matched = episodes.filter(function(ep) {
                 return ep.season === sNum && ep.episode === eNum;
               });
-              // Sezon bulunamazsa sadece bölüm numarasıyla dene
+              // Bulunamazsa sadece E ile eşleştir
               if (!matched.length) {
                 matched = episodes.filter(function(ep) { return ep.episode === eNum; });
               }
@@ -384,18 +317,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               }
 
               var epUrl = matched[0].url;
-              console.log('[CizgiMax] Bölüm sayfası: ' + epUrl);
+              console.log('[CizgiMax] Bölüm: ' + epUrl);
 
-              return fetchCizgipassUrl(epUrl)
-                .then(function(embedUrl) {
-                  if (!embedUrl) {
-                    console.log('[CizgiMax] Embed URL bulunamadı');
-                    return [];
-                  }
-                  console.log('[CizgiMax] Embed: ' + embedUrl);
-                  return extractFromCizgipass(embedUrl)
-                    .then(function(stream) { return stream ? [stream] : []; });
-                });
+              // Bölüm sayfasından embed URL + cookie al
+              return fetchEpisodeEmbed(epUrl)
+                .then(function(res) {
+                  console.log('[CizgiMax] Embed: ' + res.embedUrl);
+                  return extractFromEmbed(res.embedUrl, res.cookies);
+                })
+                .then(function(stream) { return stream ? [stream] : []; });
             });
         });
     })
@@ -414,4 +344,4 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { getStreams: getStreams };
 } else {
   global.getStreams = getStreams;
-        }
+    }
