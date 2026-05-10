@@ -145,15 +145,15 @@
       "disabledPlatforms": []
     },
     {
-      "id": "filmmakinesi",
-      "name": "Filmmakinesi",
-      "description": "Türkçe altyazılı ve dublaj yabancı diziler.",
+      "id": "sinewix",
+      "name": "sinewix",
+      "description": "Türkçe altyazılı ve dublaj yabancı filmer diziler.",
       "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
+      "author": "nuvio: Wekmed",
       "supportedTypes": [
         "movie"
       ],
-      "filename": "providers/filmmakinesi.js",
+      "filename": "providers/sinewix.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
