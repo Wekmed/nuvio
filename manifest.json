@@ -1,6 +1,6 @@
 {
   "name": "Erenxyz",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "scrapers": [
     {
       "id": "filmmodu",
@@ -22,12 +22,13 @@
     },
     {
       "id": "hdfilmcehennemi",
-      "name": "Hdfilmcehennemi",
-      "description": "Türkçe dublaj ve altyazılı full HD filmler.",
+      "name": "HDFilmCehennemi",
+      "description": "Türkçe dublaj ve altyazılı full HD film ve diziler. hdfilmcehennemi üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": "Wekmed",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "filename": "providers/hdfilmcehennemi.js",
       "enabled": true,
@@ -108,15 +109,14 @@
       "limited": false,
       "disabledPlatforms": []
     },
-        {
+    {
       "id": "fullhdfilmizlesene",
-      "name": "fullhdfilmizlesene",
-      "description": "Türkçe altyazılı ve dublaj.",
+      "name": "FullHDFilmizlesene",
+      "description": "Türkçe dublaj ve altyazılı full HD filmler. fullhdfilmizlesene.live üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": " nuvio: Wekmed",
       "supportedTypes": [
-        "movie",
-        "tv"
+        "movie"
       ],
       "filename": "providers/fullhdfilmizlesene.js",
       "enabled": true,
@@ -146,12 +146,13 @@
     },
     {
       "id": "sinewix",
-      "name": "sinewix",
-      "description": "Türkçe altyazılı ve dublaj yabancı filmer diziler.",
+      "name": "SineWix",
+      "description": "Türkçe dublaj ve altyazılı film ve diziler. SineWix üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": "nuvio: Wekmed",
       "supportedTypes": [
-        "movie"
+        "movie",
+        "tv"
       ],
       "filename": "providers/sinewix.js",
       "enabled": true,
