@@ -118,7 +118,7 @@
         "movie",
         "tv"
       ],
-      "filename": "providers/fullhdfilmizlesene.js.js",
+      "filename": "providers/fullhdfilmizlesene.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
