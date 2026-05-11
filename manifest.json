@@ -109,16 +109,16 @@
       "disabledPlatforms": []
     },
         {
-      "id": "dizipal",
-      "name": "dizipal",
-      "description": "Türkçe altyazılı ve dublaj yabancı diziler.",
+      "id": "fullhdfilmizlesene",
+      "name": "fullhdfilmizlesene",
+      "description": "Türkçe altyazılı ve dublaj.",
       "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
+      "author": " nuvio: Wekmed",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/dizilla.js",
+      "filename": "providers/fullhdfilmizlesene.js.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
