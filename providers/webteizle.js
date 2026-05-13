@@ -1,5 +1,5 @@
 // ============================================================
-//  WebteIzle — Nuvio Provider  v11
+//  WebteIzle — Nuvio Provider  v10
 // ============================================================
 
 var BASE_URL     = 'https://webteizle3.xyz';
@@ -968,8 +968,4 @@ function getStreams(tmdbId, mediaType, season, episode) {
     });
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getStreams: getStreams };
-} else {
-  global.getStreams = getStreams;
-}
+module.exports = { getStreams: getStreams };
