@@ -6,8 +6,8 @@ var BASE_URL     = 'https://webteizle3.xyz';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-X916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
   'Referer': BASE_URL + '/'
 };
@@ -507,34 +507,20 @@ function findFilmPage(titleTr, titleEn, mediaType, season, episode) {
     }
   }
 
-  // Dublaj+altyazı URL'lerini EŞ ZAMANLI dene — hangisi önce başarılı olursa onu al
-  if (!candidates.length) return searchFallback(titleTr, titleEn, mediaType, season, episode);
-
-  return new Promise(function(resolve) {
-    var done = false;
-    var failed = 0;
-
-    candidates.forEach(function(url) {
-      fetch(url, { headers: HEADERS })
-        .then(function(r) {
-          if (!r.ok) throw new Error('not ok');
-          return r.text().then(function(html) {
-            if (html.indexOf('data-id') === -1) throw new Error('no data-id');
-            if (mediaType === 'tv' && html.indexOf('data-s=') === -1) throw new Error('no data-s');
-            return { url: url, html: html };
-          });
-        })
-        .then(function(result) {
-          if (!done) { done = true; resolve(result); }
-        })
-        .catch(function() {
-          failed++;
-          if (failed === candidates.length && !done) {
-            resolve(searchFallback(titleTr, titleEn, mediaType, season, episode));
-          }
+  function tryNext(i) {
+    if (i >= candidates.length) return searchFallback(titleTr, titleEn, mediaType, season, episode);
+    return fetch(candidates[i], { headers: HEADERS })
+      .then(function(r) {
+        if (!r.ok) return tryNext(i + 1);
+        return r.text().then(function(html) {
+          if (html.indexOf('data-id') === -1) return tryNext(i + 1);
+          // Dizi sayfasında data-s= olmalı
+          if (mediaType === 'tv' && html.indexOf('data-s=') === -1) return tryNext(i + 1);
+          return { url: candidates[i], html: html };
         });
-    });
-  });
+      }).catch(function() { return tryNext(i + 1); });
+  }
+  return tryNext(0);
 }
 
 function searchFallback(titleTr, titleEn, mediaType, season, episode) {
@@ -576,17 +562,8 @@ function parseDilList(html, pageUrl) {
   return d;
 }
 
-function fetchWithTimeout(url, opts, ms) {
-  return new Promise(function(resolve, reject) {
-    var timer = setTimeout(function() { reject(new Error('timeout')); }, ms || 8000);
-    fetch(url, opts).then(function(r) {
-      clearTimeout(timer); resolve(r);
-    }).catch(function(e) { clearTimeout(timer); reject(e); });
-  });
-}
-
 function fetchAlternatifler(filmId, dil, season, episode) {
-  return fetchWithTimeout(BASE_URL + '/ajax/dataAlternatif3.asp', {
+  return fetch(BASE_URL + '/ajax/dataAlternatif3.asp', {
     method: 'POST',
     headers: Object.assign({}, HEADERS, {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -594,14 +571,9 @@ function fetchAlternatifler(filmId, dil, season, episode) {
       'Origin': BASE_URL
     }),
     body: 'filmid=' + filmId + '&dil=' + dil + '&s=' + (season || '') + '&b=' + (episode || '') + '&bot=0'
-  }, 6000)
-  .then(function(r) { return r.text(); })
-  .then(function(t) {
-    if (!t || t[0] === '<') return [];
-    try { var d = JSON.parse(t); return (d.status === 'success' && Array.isArray(d.data)) ? d.data : []; }
-    catch(e) { return []; }
   })
-  .catch(function() { return []; });
+  .then(function(r) { return r.json(); })
+  .then(function(d) { return (d.status === 'success' && Array.isArray(d.data)) ? d.data : []; });
 }
 
 function fetchEmbedData(embedId) {
@@ -661,15 +633,9 @@ function fmBaseH(cookies, playerDomain) {
   var h = {
     'User-Agent':      HEADERS['User-Agent'],
     'Accept':          'application/json, */*',
-    'Accept-Language':    'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Origin':             'https://' + domain,
-    'Referer':            'https://' + domain + '/',
-    'sec-ch-ua':          '"Chromium";v="124", "Not-A.Brand";v="99", "Google Chrome";v="124"',
-    'sec-ch-ua-mobile':   '?1',
-    'sec-ch-ua-platform': '"Android"',
-    'sec-fetch-dest':     'empty',
-    'sec-fetch-mode':     'cors',
-    'sec-fetch-site':     'same-origin'
+    'Accept-Language': 'tr-TR,tr;q=0.7',
+    'Origin':          'https://' + domain,
+    'Referer':         'https://' + domain + '/'
   };
   if (cookies && Object.keys(cookies).length) h['Cookie'] = cookieStr(cookies);
   return h;
@@ -736,19 +702,19 @@ function extractFileMoon(videoId, iframeSrc) {
         signature: ec.signature, public_key: ec.public_key,
         client: {
           user_agent: HEADERS['User-Agent'],
-          architecture: 'arm', bitness: '64',
-          platform: 'Android', platform_version: '14.0.0', model: 'SM-X916B',
-          ua_full_version: '124.0.6367.82',
-          brand_full_versions: [{ brand: 'Chromium', version: '124.0.6367.82' }, { brand: 'Not-A.Brand', version: '99.0.0.0' }, { brand: 'Google Chrome', version: '124.0.6367.82' }],
-          pixel_ratio: 2, screen_width: 1600, screen_height: 2560,
-          color_depth: 24, languages: ['tr-TR', 'tr', 'en-US'],
-          timezone: 'Europe/Istanbul', hardware_concurrency: 8,
-          device_memory: 8, touch_points: 10,
-          webgl_vendor: 'Qualcomm', webgl_renderer: 'Adreno (TM) 740',
+          architecture: 'x86', bitness: '64',
+          platform: 'Windows', platform_version: '10.0.0', model: '',
+          ua_full_version: '137.0.0.0',
+          brand_full_versions: [{ brand: 'Firefox', version: '137.0.0.0' }],
+          pixel_ratio: 1, screen_width: 1920, screen_height: 1080,
+          color_depth: 24, languages: ['tr-TR', 'tr'],
+          timezone: 'Europe/Istanbul', hardware_concurrency: 4,
+          device_memory: 8, touch_points: 0,
+          webgl_vendor: 'Mozilla', webgl_renderer: 'Mozilla',
           canvas_hash: bytesToB64url(secureRandom(32)),
           audio_hash:  bytesToB64url(secureRandom(32)),
-          pointer_type: 'coarse,touch',
-          extra: { vendor: 'Google Inc.', appVersion: '5.0 (Linux; Android 14; SM-X916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Safari/537.36' }
+          pointer_type: 'fine,mouse',
+          extra: { vendor: 'Mozilla', appVersion: '5.0 (Windows)' }
         },
         storage: {
           cookie: viewerId, local_storage: viewerId,
@@ -932,10 +898,6 @@ function processEmbed(embedData, dilAd, movieTitle) {
 //  ANA FONKSİYON
 // ═══════════════════════════════════════════════════════════
 function getStreams(tmdbId, mediaType, season, episode) {
-  // TMDB ile slug-deneme paralel başlar; TMDB bitmeden slug'ı bilmiyoruz ama
-  // timing açısından TMDB genelde ~300ms, sayfa fetch ~500ms — art arda gitmek zorundayız.
-  // Optimizasyon: TMDB sonucu gelir gelmez fetchAlternatifler için dublaj+altyazı
-  // isteklerini eş zamanlı ateşle (Promise.all zaten bunu yapıyor).
   return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
       var movieName = info.titleTr || info.titleEn;
@@ -945,20 +907,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
           if (!filmId) throw new Error('Film ID bulunamadi');
           var diller  = parseDilList(result.html, result.url);
           var streams = [];
-
-          // Dublaj + altyazı alternatiflerini EŞ ZAMANLI çek
           return Promise.all(diller.map(function(d) {
             return fetchAlternatifler(filmId, d.dil, season, episode)
               .then(function(list) {
-                // Tüm embed'leri EŞ ZAMANLI işle
                 return Promise.all(list.map(function(e) {
-                  return processEmbed(e, d.ad, movieName).catch(function() { return null; });
+                  return processEmbed(e, d.ad, movieName);
                 }));
               })
               .then(function(results) {
                 results.forEach(function(s) { if (s) streams.push(s); });
-              })
-              .catch(function() {});
+              });
           })).then(function() { return streams; });
         });
     })
