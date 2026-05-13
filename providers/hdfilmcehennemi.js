@@ -8,13 +8,7 @@ var PRIMARY_DOMAIN = 'https://www.hdfilmcehennemi.nl';
 
 var CDN_HOSTS = [
   'https://srv12.cdnimages96.shop',
-  'https://srv12.cdnimages1128.shop',
-  'https://srv1.cdnimages391.shop',
-  'https://srv2.cdnimages391.shop',
-  'https://srv3.cdnimages391.shop',
-  'https://cdn1.cdnimages1128.shop',
-  'https://srv10.cdnimages1128.shop',
-  'https://srv11.cdnimages1128.shop'
+  'https://srv12.cdnimages1128.shop'
 ];
 
 var FALLBACK_DOMAINS = [
