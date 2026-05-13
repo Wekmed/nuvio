@@ -287,23 +287,171 @@ function fmGenerateAndSign(nonce) {
   }
 }
 
-// AES-256-GCM decrypt — crypto.subtle gerekli
-// (playback decrypt için — bu crypto.subtle olmadan çalışmaz;
-//  Hermes'te crypto.subtle yoksa ve de getRandomValues varsa decrypt çalışmayabilir.
-//  Nuvio'nun crypto.subtle desteği için test edilmeli.)
+// AES-256-GCM decrypt — crypto.subtle varsa native, yoksa pure-JS
+// Nuvio QuickJS engine'de crypto.subtle YOK, pure-JS fallback kullanılır
 function aesGcmDecrypt(keyBytes, ivBytes, dataBytes) {
+  // native path
   var c = getCrypto();
-  if (!c) return Promise.reject(new Error('crypto.subtle yok — AES decrypt mümkün değil'));
-  return c.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt'])
-    .then(function(k) {
-      return c.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, k, dataBytes);
-    })
-    .then(function(buf) {
-      var bytes = new Uint8Array(buf);
-      var str = '';
-      for (var i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
-      return str;
-    });
+  if (c && c.subtle) {
+    return c.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt'])
+      .then(function(k) { return c.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, k, dataBytes); })
+      .then(function(buf) {
+        var bytes = new Uint8Array(buf), str = '';
+        for (var i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+        return str;
+      });
+  }
+  // pure-JS AES-256-GCM (Nuvio/QuickJS için)
+  try {
+    var plain = aesGcmDecryptPure(keyBytes, ivBytes, dataBytes);
+    if (plain === null) return Promise.reject(new Error('AES-GCM auth tag hatası'));
+    return Promise.resolve(plain);
+  } catch(e) {
+    return Promise.reject(e);
+  }
+}
+
+// ── Pure-JS AES-256-GCM ────────────────────────────────────────
+// Pure-JS AES-256-GCM — Nuvio QuickJS için
+
+// Sabit AES S-box
+var _AES_SBOX = [
+  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+];
+var _AES_RCON = [0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d];
+
+function _xtime(b) { return ((b<<1)^(b&0x80?0x1b:0))&0xff; }
+function _mul(a,b) {
+  var r=0;
+  while(b){if(b&1)r^=a;a=_xtime(a);b>>=1;}
+  return r;
+}
+
+function _aesKeySchedule256(key) {
+  var w = new Array(60);
+  for(var i=0;i<8;i++)
+    w[i]=(key[4*i]<<24)|(key[4*i+1]<<16)|(key[4*i+2]<<8)|key[4*i+3];
+  for(var i=8;i<60;i++){
+    var t=w[i-1];
+    if(i%8===0){
+      t=(((_AES_SBOX[(t>>>16)&0xff])<<24)|((_AES_SBOX[(t>>>8)&0xff])<<16)|
+         ((_AES_SBOX[t&0xff])<<8)|(_AES_SBOX[(t>>>24)&0xff]))^(_AES_RCON[i/8-1]<<24);
+    } else if(i%8===4){
+      t=((_AES_SBOX[(t>>>24)&0xff])<<24)|((_AES_SBOX[(t>>>16)&0xff])<<16)|
+        ((_AES_SBOX[(t>>>8)&0xff])<<8)|(_AES_SBOX[t&0xff]);
+    }
+    w[i]=(w[i-8]^t)>>>0;
+  }
+  return w;
+}
+
+function _aesEncryptBlock(blk, w) {
+  var s=new Uint8Array(16), t=new Uint8Array(16);
+  for(var i=0;i<16;i++) s[i]=blk[i]^((w[i>>2]>>>(24-8*(i&3)))&0xff);
+  for(var r=1;r<=14;r++){
+    // SubBytes + ShiftRows
+    t[0]=_AES_SBOX[s[0]]; t[1]=_AES_SBOX[s[5]]; t[2]=_AES_SBOX[s[10]]; t[3]=_AES_SBOX[s[15]];
+    t[4]=_AES_SBOX[s[4]]; t[5]=_AES_SBOX[s[9]]; t[6]=_AES_SBOX[s[14]]; t[7]=_AES_SBOX[s[3]];
+    t[8]=_AES_SBOX[s[8]]; t[9]=_AES_SBOX[s[13]]; t[10]=_AES_SBOX[s[2]]; t[11]=_AES_SBOX[s[7]];
+    t[12]=_AES_SBOX[s[12]]; t[13]=_AES_SBOX[s[1]]; t[14]=_AES_SBOX[s[6]]; t[15]=_AES_SBOX[s[11]];
+    if(r<14){
+      // MixColumns
+      for(var c=0;c<4;c++){
+        var a0=t[c*4],a1=t[c*4+1],a2=t[c*4+2],a3=t[c*4+3];
+        s[c*4]  =_xtime(a0)^_xtime(a1)^a1^a2^a3;
+        s[c*4+1]=a0^_xtime(a1)^_xtime(a2)^a2^a3;
+        s[c*4+2]=a0^a1^_xtime(a2)^_xtime(a3)^a3;
+        s[c*4+3]=_xtime(a0)^a0^a1^a2^_xtime(a3);
+      }
+    } else {
+      for(var i=0;i<16;i++) s[i]=t[i];
+    }
+    // AddRoundKey
+    for(var i=0;i<16;i++) s[i]^=(w[r*4+(i>>2)]>>>(24-8*(i&3)))&0xff;
+  }
+  return s;
+}
+
+// GCM: GF(2^128) multiply
+function _gmul128(x, y) {
+  var z=new Uint8Array(16), v=new Uint8Array(y);
+  for(var i=0;i<128;i++){
+    if(x[i>>3]&(0x80>>(i&7)))
+      for(var j=0;j<16;j++) z[j]^=v[j];
+    var lsb=v[15]&1;
+    for(var j=15;j>0;j--) v[j]=(v[j]>>1)|((v[j-1]&1)<<7);
+    v[0]>>=1;
+    if(lsb) v[0]^=0xe1;
+  }
+  return z;
+}
+
+function _ghash(H, data) {
+  var y=new Uint8Array(16);
+  for(var i=0;i<data.length;i+=16){
+    var blk=new Uint8Array(16);
+    for(var j=0;j<16&&i+j<data.length;j++) blk[j]=data[i+j];
+    for(var j=0;j<16;j++) y[j]^=blk[j];
+    y=_gmul128(y,H);
+  }
+  return y;
+}
+
+function aesGcmDecryptPure(key, iv, data) {
+  var w = _aesKeySchedule256(new Uint8Array(key));
+  // H = AES(key, 0^128)
+  var H = _aesEncryptBlock(new Uint8Array(16), w);
+  // J0 (IV=12 bytes)
+  var J0 = new Uint8Array(16);
+  for(var i=0;i<12;i++) J0[i]=iv[i]; J0[15]=0x01;
+  // Split ciphertext + tag
+  var ctLen = data.length - 16;
+  var ct  = data.slice(0, ctLen);
+  var tag = data.slice(ctLen);
+  // CTR decrypt starting from J0+1
+  var ctr = new Uint8Array(J0); ctr[15]=0x02;
+  var plain = new Uint8Array(ctLen);
+  for(var i=0;i<ctLen;i+=16){
+    var ks=_aesEncryptBlock(ctr, w);
+    for(var j=0;j<16&&i+j<ctLen;j++) plain[i+j]=ct[i+j]^ks[j];
+    for(var k=15;k>=12;k--){ctr[k]=(ctr[k]+1)&0xff;if(ctr[k]!==0)break;}
+  }
+  // Compute auth tag: GHASH(H, pad(CT) || len64(0) || len64(CT))
+  var padLen = (16-ctLen%16)%16;
+  var ghashData = new Uint8Array(ctLen + padLen + 16);
+  for(var i=0;i<ctLen;i++) ghashData[i]=ct[i];
+  // len64(AAD)=0, len64(CT) in bits, big-endian
+  var ctBits = ctLen * 8;
+  ghashData[ghashData.length-1] = ctBits & 0xff;
+  ghashData[ghashData.length-2] = (ctBits>>>8) & 0xff;
+  ghashData[ghashData.length-3] = (ctBits>>>16) & 0xff;
+  ghashData[ghashData.length-4] = (ctBits>>>24) & 0xff;
+  var S = _ghash(H, ghashData);
+  var J0enc = _aesEncryptBlock(J0, w);
+  var computed = new Uint8Array(16);
+  for(var i=0;i<16;i++) computed[i]=S[i]^J0enc[i];
+  // Constant-time compare
+  var diff=0;
+  for(var i=0;i<16;i++) diff|=(computed[i]^tag[i]);
+  if(diff!==0){ console.log('Tag mismatch! computed='+Buffer.from(computed).toString('hex')+' got='+Buffer.from(tag).toString('hex')); return null; }
+  var str='';
+  for(var i=0;i<plain.length;i++) str+=String.fromCharCode(plain[i]);
+  return str;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -444,7 +592,7 @@ function fetchEmbedData(embedId) {
     if (mIframe) {
       var iSrc = mIframe[1];
       // bysezoxexe / 398fitus / filemoon → slug çıkar, filemoon tipine yönlendir
-      var fmSlugM = iSrc.match(/\/(?:e|ys8|je8)\/([a-zA-Z0-9]+)/);
+      var fmSlugM = iSrc.match(/\/(?:e|ys8|je8|s8w|7szbi|od7ha|v|f|embed)\/([a-zA-Z0-9]+)/);
       if (fmSlugM && (iSrc.indexOf('bysezoxexe') !== -1 || iSrc.indexOf('398fitus') !== -1 || iSrc.indexOf('filemoon') !== -1)) {
         return { type: 'filemoon', videoId: fmSlugM[1], iframeSrc: iSrc };
       }
@@ -507,20 +655,32 @@ function extractFileMoon(videoId, iframeSrc) {
   var deviceId = randomHex(16);
 
   // playerDomain: iframeSrc'den belirle
-  var playerApi    = FM_API;       // default: https://398fitus.com
-  var playerDomain = '398fitus.com'; // default
+  // playerApi her zaman 398fitus.com — bysezoxexe.com embed'i de 398fitus üzerinden çalışıyor
+  var playerApi    = FM_API;         // https://398fitus.com
+  var playerDomain = '398fitus.com';
   if (iframeSrc) {
-    if (iframeSrc.indexOf('398fitus') !== -1)   { playerApi = 'https://398fitus.com'; playerDomain = '398fitus.com'; }
-    else if (iframeSrc.indexOf('filemoon.sx') !== -1) { playerApi = 'https://filemoon.sx'; playerDomain = 'filemoon.sx'; }
+    if (iframeSrc.indexOf('filemoon.sx') !== -1) { playerApi = 'https://filemoon.sx'; playerDomain = 'filemoon.sx'; }
     else if (iframeSrc.indexOf('filemoon.to') !== -1) { playerApi = 'https://filemoon.to'; playerDomain = 'filemoon.to'; }
-    // bysezoxexe.com → 398fitus'a git (embed_frame_url 398fitus döndürüyor)
+    // bysezoxexe.com ve 398fitus.com → her ikisi de FM_API=398fitus.com kullanır
   }
 
-  // 1) Settings
+  // 1) Settings — cookie al, hata olursa devam et
   return fetch(playerApi + '/api/videos/' + videoId + '/embed/settings', {
     headers: Object.assign(fmBaseH(cookies, playerDomain), fmEmbedH(videoId))
   })
-  .then(function(r) { parseCookies(r.headers.get('set-cookie'), cookies); return r.json(); })
+  .then(function(r) { parseCookies(r.headers.get('set-cookie'), cookies); return r.text(); })
+  .catch(function() { return ''; })
+
+  // 1b) embed/view — browser'ın yaptığı gibi view kaydı (heartbeat token için şart)
+  .then(function() {
+    return fetch(playerApi + '/api/videos/' + videoId + '/embed/view', {
+      method: 'POST',
+      headers: Object.assign(fmBaseH(cookies, playerDomain), fmEmbedH(videoId), { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ viewer_id: viewerId })
+    })
+    .then(function(r) { parseCookies(r.headers.get('set-cookie'), cookies); return r.text(); })
+    .catch(function() { return ''; });
+  })
 
   // 2) Challenge
   .then(function() {
@@ -619,7 +779,22 @@ function extractFileMoon(videoId, iframeSrc) {
     }
     var url = best.url || '';
     if (!url) throw new Error('url boş');
+    // Decrypt sonrası URL'de kalabilecek whitespace/boşluk karakterlerini temizle
+    url = url.replace(/\s+/g, '');
+    // asn parametresi IP'ye bağlı token - boşalt
+    url = url.replace(/([?&])asn=[^&]*/g, function(m, sep) { return sep + 'asn='; });
     console.log('[WebteIzle] FileMoon ✓ ' + url.slice(0, 80));
+
+    // Heartbeat — stream token'ını canlı tut (browser da bunu yapıyor)
+    // Fire-and-forget: sonucu bekleme
+    try {
+      fetch(playerApi + '/api/videos/' + videoId + '/embed/heartbeat', {
+        method: 'POST',
+        headers: Object.assign(fmBaseH(cookies, playerDomain), fmEmbedH(videoId), { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ viewer_id: viewerId, device_id: deviceId })
+      }).catch(function() {});
+    } catch(e) {}
+
     return { url: url, type: 'hls', referer: 'https://' + FM_DOMAIN + '/' };
   })
   .catch(function(e) {
@@ -690,7 +865,7 @@ function processEmbed(embedData, dilAd, movieTitle) {
       return extractFileMoon(embed.videoId, embed.iframeSrc).then(function(s) {
         if (!s) return null;
         return { url: s.url, name: movieTitle, title: titleStr, quality: q,
-                 type: 'hls', headers: { 'Referer': s.referer } };
+                 type: 'hls', headers: { 'Referer': s.referer, 'Origin': 'https://bysezoxexe.com' } };
       });
     }
 
