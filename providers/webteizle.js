@@ -1,5 +1,5 @@
 // ============================================================
-//  WebteIzle — Nuvio Provider  v10
+//  WebteIzle — Nuvio Provider  v11
 // ============================================================
 
 var BASE_URL     = 'https://webteizle3.xyz';
