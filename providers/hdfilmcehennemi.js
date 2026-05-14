@@ -23,11 +23,9 @@ var CDN_HOSTS = [
   'https://srv12.cdnimages784.shop',
   'https://srv12.cdnimages965.shop',
   'https://srv12.cdnimages403.shop',
-  'https://srv1.cdnimages391.shop',
-  'https://srv2.cdnimages391.shop',
-  'https://srv3.cdnimages391.shop',
-  'https://cdn1.cdnimages1128.shop',
-  'https://srv10.cdnimages1128.shop'
+  'https://srv12.cdnimages391.shop',
+  'https://srv12.cdnimages391.shop',
+  'https://srv12.cdnimages391.shop',
 ];
 
 var FALLBACK_DOMAINS = [
