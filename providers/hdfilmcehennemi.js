@@ -592,6 +592,8 @@ function resolveRapidrameSource(rplayerUrl, sourceName, pageReferer) {
 }
 
 // ── /video/{id}/ → Close veya Rapidrame ──────────────────────
+// sourceName'de "rapidrame" geçiyorsa → /rplayer/ yolu
+// sourceName'de "close" geçiyorsa (veya varsayılan) → embed → CDN
 
 function getVideoSource(domain, videoId, sourceName, pageReferer) {
   return fetch(domain + '/video/' + videoId + '/', {
@@ -602,36 +604,54 @@ function getVideoSource(domain, videoId, sourceName, pageReferer) {
     return r.text();
   })
   .then(function(raw) {
-    // JSON parse dene, fallback regex
     var iframe = null;
     try {
       var json = JSON.parse(raw);
       var htmlContent = (json.data || {}).html || '';
       var m1 = htmlContent.match(/data-src=["']([^"']+)["']/i);
       if (m1) iframe = m1[1].replace(/\\/g, '');
-    } catch (e) {}
-    if (!iframe) {
-      var m2 = raw.match(/data-src=\\"([^"]+)/i);
-      if (m2) iframe = m2[1].replace(/\\/g, '');
+      if (!iframe) {
+        var m2 = htmlContent.match(/data-src=\\"([^"]+)/i);
+        if (m2) iframe = m2[1].replace(/\\/g, '');
+      }
+    } catch (e) {
+      var m3 = raw.match(/data-src=\\"([^"]+)/i);
+      if (m3) iframe = m3[1].replace(/\\/g, '');
     }
-    if (!iframe) return [];
+    if (!iframe) { console.log('[HDFC] iframe bulunamadı: ' + sourceName); return []; }
 
-    console.log('[HDFC] ' + sourceName + ' iframe: ' + iframe);
+    console.log('[HDFC] ' + sourceName + ' → iframe: ' + iframe);
 
-    // Rapidrame: ?rapidrame_id= → /rplayer/{id}/
-    if (iframe.indexOf('rapidrame_id=') !== -1) {
+    var isRapidrame = sourceName.toLowerCase().indexOf('rapidrame') !== -1;
+
+    // Rapidrame yolu: sourceName'de "rapidrame" var → iframe'deki rapidrame_id ile /rplayer/
+    if (isRapidrame && iframe.indexOf('rapidrame_id=') !== -1) {
       var rapId      = iframe.split('rapidrame_id=')[1].split('&')[0];
       var rplayerUrl = domain + '/rplayer/' + rapId + '/';
+      console.log('[HDFC] → Rapidrame rplayer: ' + rplayerUrl);
       return resolveRapidrameSource(rplayerUrl, sourceName, pageReferer);
     }
 
-    // Close: .mobi/video/embed/ → embed sayfası → CDN host
+    // Rapidrame yolu ama iframe'de mobi embed var (kekikstream tarzı)
+    if (isRapidrame && iframe.indexOf('hdfilmcehennemi.mobi') !== -1) {
+      // embed sayfasından rapidrame_id'yi al, /rplayer/ oluştur
+      var qIdx = iframe.indexOf('rapidrame_id=');
+      if (qIdx !== -1) {
+        var rapId2     = iframe.slice(qIdx + 13).split('&')[0];
+        var rplayerUrl2 = domain + '/rplayer/' + rapId2 + '/';
+        console.log('[HDFC] → Rapidrame embed→rplayer: ' + rplayerUrl2);
+        return resolveRapidrameSource(rplayerUrl2, sourceName, pageReferer);
+      }
+    }
+
+    // Close yolu: .mobi/video/embed/ → embed sayfası → thumbnail → CDN
     if (iframe.indexOf('hdfilmcehennemi.mobi') !== -1) {
-      var embedUrl = iframe.split('?')[0];
+      var embedUrl = iframe.split('?')[0]; // query string temizle
+      console.log('[HDFC] → Close embed: ' + embedUrl);
       return fetchStreamsFromEmbed(embedUrl, pageReferer, sourceName);
     }
 
-    // Diğer (eski player vb.) → embed gibi dene
+    // Diğer iframe türleri
     return fetchStreamsFromEmbed(fixUrl(iframe), pageReferer, sourceName);
   })
   .catch(function(e) {
