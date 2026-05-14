@@ -1,6 +1,14 @@
 // ============================================================
 //  HDFilmCehennemi — Nuvio Provider
 //
+//  Close  : V5 akışı — thumbnail → CDN host listesi (paralel)
+//  Rapidrame: patron mantığı — /rplayer/{id}/ → resolveVideoFromScript → decodeDcHello
+//
+//  Düzeltmeler:
+//   ✓ authority: www.hdfilmcehennemi.pro → search JSON döner
+//   ✓ subtitles: [] (undefined değil) → VTT Nuvio'da görünür
+//   ✓ CDN headers: Referer + Origin eklendi → source error düzeltildi
+//   ✓ Rapidrame: patron'un decodeDcHello (8 strateji) + resolveVideoFromScript
 // ============================================================
 
 var TMDB_API_KEY   = '500330721680edb6d5f7f12ba7cd9023';
@@ -102,7 +110,7 @@ function norm(s) {
 var _activeDomain = null;
 
 function getActiveDomain() {
-  if (_activeDomain) return Promise.resolve(_activeDomain);
+  if (_activeDomain) { console.log('[HDFC] Domain (cache): ' + _activeDomain); return Promise.resolve(_activeDomain); }
   return fetch(PRIMARY_DOMAIN + '/', { headers: PAGE_HEADERS })
     .then(function(r) {
       if (!r.ok) return _tryFallbacks();
@@ -282,7 +290,9 @@ function buildStreamsFromM3u8(m3u8Text, masterUrl, subtitles, sourceName) {
   var subs    = subtitles || [];
   var trSubs  = subs.filter(function(s) { return /turkish|türkçe/i.test(s.language); });
   var enSubs  = subs.filter(function(s) { return /english/i.test(s.language); });
-  var prefix  = '⌜ HDFILMCEHENNEMI ⌟' + (sourceName ? ' | ' + sourceName : '');
+  // sourceName "DUAL | Close" gibi gelebilir - lang prefix'i ayrıca ekliyoruz, tekrar etmesin
+  var _nameClean = (sourceName || '').replace(/^[A-Z]+\s*\|\s*/, ''); // "DUAL | Close" → "Close"
+  var prefix  = '⌜ HDFILMCEHENNEMI ⌟' + (_nameClean ? ' | ' + _nameClean : '');
   var base    = { name: 'HDFilmCehennemi', url: masterUrl, quality: quality, type: 'hls', headers: CDN_HEADERS };
   var streams = [];
   if (isDual) {
@@ -308,10 +318,10 @@ function tryCdnHosts(filename, subtitles, sourceName) {
       fetch(masterUrl, { headers: CDN_HEADERS })
         .then(function(r) {
           done++;
-          if (settled) return;
+          if (settled) { return; }
           if (r.ok) {
             return r.text().then(function(m3u8) {
-              if (m3u8.indexOf('#EXTM3U') !== -1) {
+              if (!settled && m3u8.indexOf('#EXTM3U') !== -1) {
                 settled = true;
                 console.log('[HDFC] CDN hit: ' + host);
                 resolve(buildStreamsFromM3u8(m3u8, masterUrl, subtitles, sourceName));
@@ -486,7 +496,7 @@ function resolveVideoFromScript(script) {
   }
 
   // 2. sources: [{file: VAR}] → var VAR = dc_(...) 
-  var srcVar = (combined.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*([A-Za-z0-9_]+)\s*\}\s*]/i) || [])[1];
+  var srcVar = (combined.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*([A-Za-z0-9_]+)\s*[,}]/i) || [])[1];
   if (srcVar) {
     var varRe  = new RegExp('var\\s+' + srcVar + '\\s*=\\s*[A-Za-z0-9_]+\\(\\([\\s\\S]*?\\]\\)', 'i');
     var varM   = combined.match(varRe);
@@ -495,7 +505,9 @@ function resolveVideoFromScript(script) {
     var varM2  = combined.match(varRe2);
     if (varM2) {
       var pts = _parseQuotedArray(varM2[1]);
+      console.log('[HDFC] Rapidrame parts: ' + pts.length);
       var d   = decodeDcHello(pts);
+      console.log('[HDFC] Rapidrame decoded: ' + (d || 'YOK'));
       if (d) return d;
     }
   }
@@ -702,6 +714,7 @@ function fetchStreamsFromPage(domain, pageUrl) {
 
   return fetch(routerUrl, { headers: routerHdrs })
     .then(function(r) {
+      console.log('[HDFC] Router response: HTTP ' + r.status);
       if (!r.ok) throw new Error('router HTTP ' + r.status);
       return r.json();
     })
