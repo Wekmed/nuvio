@@ -162,23 +162,16 @@
       "limited": false,
       "disabledPlatforms": []
     },
-    {
-      "id": "rectv",
-      "name": "RecTv",
-      "description": "Türkçe dublaj ve altyazılı dizi ve filmler. API tabanlı, geniş içerik arşivi.",
-      "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/rectv.js",
-      "enabled": true,
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    }
+{
+  "id": "diziyou",
+  "name": "DiziYou",
+  "description": "Türkce dizi ve filmler — Türkçe altyazı & dublaj desteği",
+  "version": "1.0.0",
+  "author": "Nuvio uyarlaması",
+  "supportedTypes": ["tv", "movie"],
+  "filename": "providers/diziyou.js",
+  "enabled": true,
+  "logo": "https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/diziyou.png"
+}
   ]
 }
