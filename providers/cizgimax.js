@@ -1,5 +1,6 @@
 // ============================================================
-//  CizgiVeDizi — Nuvio Provider  (v7)
+//  CizgiVeDizi — Nuvio Provider  (v8)
+//  TV dizileri + filmler destekler
 // ============================================================
 
 var BASE_URL       = 'https://www.cizgivedizi.com';
@@ -44,17 +45,24 @@ function norm(s) {
     .replace(/[^a-z0-9]/g,'');
 }
 
-/** URL path için güvenli encode: sadece boşluk + ASCII-dışı karakterler */
+/**
+ * URL path segmenti için encode.
+ * ':' → %3A dahil özel karakterler encode edilir.
+ * Parantez, tire, alt çizgi, nokta olduğu gibi kalır.
+ */
 function encodePath(s) {
+  var safe = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~()\'!*';
   var out = '';
   for (var i = 0; i < s.length; i++) {
+    var c    = s[i];
     var code = s.charCodeAt(i);
-    if (s[i] === ' ') {
-      out += '%20';
+    if (safe.indexOf(c) !== -1) {
+      out += c;
     } else if (code > 127) {
-      out += encodeURIComponent(s[i]);
+      out += encodeURIComponent(c);
     } else {
-      out += s[i];  // parantez, tire, nokta, alt çizgi olduğu gibi
+      // ASCII özel karakterler: : @ # $ & + , ; = ? ^ ` { | } vs
+      out += '%' + ('0' + code.toString(16).toUpperCase()).slice(-2);
     }
   }
   return out;
@@ -89,11 +97,6 @@ function fetchTmdbInfo(tmdbId, mediaType) {
 
 // ── 2. Arama + Skorlama ──────────────────────────────────────
 
-/**
- * Sorgu listesi oluşturur.
- * TR önce: Regular Show → "Sürekli Dizi" ile bulunur.
- * EN de denenir: Adventure Time → EN ile direkt bulunur.
- */
 function buildQueries(titleTr, titleEn) {
   var out = [];
   function add(q) {
@@ -101,15 +104,15 @@ function buildQueries(titleTr, titleEn) {
     if (q && out.indexOf(q) === -1) out.push(q);
   }
 
-  // TR tam → EN tam → EN son anlamlı kelime → TR anlamlı kelimeler
+  // TR tam → EN tam → EN son anlamlı → TR son anlamlı
   add(titleTr);
   add(titleEn);
 
   var enWords = (titleEn || '').split(/[\s\-:,]+/).filter(function(w) {
     return STOP_WORDS.indexOf(w.toLowerCase()) === -1 && w.length > 2;
   });
-  if (enWords.length > 1) add(enWords[enWords.length - 1]); // son kelime: "Gumball"
-  if (enWords.length > 1) add(enWords[0]);                  // ilk kelime
+  if (enWords.length > 1) add(enWords[enWords.length - 1]);
+  if (enWords.length > 1) add(enWords[0]);
 
   var trWords = (titleTr || '').split(/[\s\-:,]+/).filter(function(w) {
     return STOP_WORDS.indexOf(w.toLowerCase()) === -1 && w.length > 2;
@@ -129,57 +132,48 @@ function searchSite(query, mediaType) {
 }
 
 /**
- * API yanıtındaki item'ı TMDB bilgisiyle karşılaştırır.
+ * Skorlama:
+ * - name içinde yıl varsa (ducktales (2017)): yıl eşleşmesi kesin belirleyici
+ * - name yılsız (gumball, adventure time): isim benzerliği ile
  *
- * Önemli: site name'leri:
- *   "gumball"              → EN isim kısa
- *   "ducktales (2017)"     → yıl parantez içinde
- *   "sürekli dizi"         → TR isim (EN: Regular Show)
- *   "adventure time"       → EN isim
- *
- * Skor:
- *   100 = kesin eşleşme (isim + yıl uyumu)
- *    90 = isim tam eşleşme, yıl kontrolü başarılı
- *    80 = isim tam eşleşme, yılsız
- *    70 = kısmi eşleşme
- *     0 = eşleşme yok
+ * Önemli kural: ne.indexOf(n) kontrolü
+ * "theamazingworldofgumball".indexOf("gumball") = pozitif → 80 puan
+ * Bu şekilde site kısa isimleri (gmb=gumball) doğru eşleşiyor.
  */
 function scoreItem(item, titleEn, titleTr, year) {
-  var n      = norm(item.name || '');
-  var ne     = norm(titleEn);
-  var nt     = norm(titleTr);
+  var n  = norm(item.name || '');
+  var ne = norm(titleEn);
+  var nt = norm(titleTr);
 
-  // Name içindeki yıl: "ducktales (2017)" → "2017"
-  var nameYear = (item.name || '').match(/\b(19[89]\d|20[0-3]\d)\b/);
-  nameYear = nameYear ? nameYear[1] : null;
+  // Name içindeki yıl
+  var nameYearM = (item.name || '').match(/\b(19[89]\d|20[0-3]\d)\b/);
+  var nameYear  = nameYearM ? nameYearM[1] : null;
 
-  // İsim eşleşme skoru
+  // Yılsız isim (karşılaştırma için)
+  var nClean  = n.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
+  var neClean = ne.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
+  var ntClean = nt.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
+
+  // İsim benzerlik skoru
   var nameScore = 0;
-  if (n === ne || n === nt) {
-    nameScore = 80;
-  } else {
-    // Name yıl içeriyorsa temizle: "ducktales (2017)" → "ducktales"
-    var nClean = n.replace(/\d{4}/g, '').replace(/[^a-z0-9]/g, '');
-    var neClean = ne.replace(/\d{4}/g, '').replace(/[^a-z0-9]/g, '');
-    var ntClean = nt.replace(/\d{4}/g, '').replace(/[^a-z0-9]/g, '');
-    if (nClean === neClean || nClean === ntClean) {
-      nameScore = 75;
-    } else if (nClean.length > 3 && (neClean.indexOf(nClean) !== -1 || nClean.indexOf(neClean) !== -1)) {
-      nameScore = 70;
-    } else if (nClean.length > 3 && (ntClean.indexOf(nClean) !== -1 || nClean.indexOf(ntClean) !== -1)) {
-      nameScore = 70;
-    }
+  if (nClean === neClean || nClean === ntClean) {
+    nameScore = 80; // tam eşleşme (yılsız)
+  } else if (neClean.length > 2 && neClean.indexOf(nClean) !== -1) {
+    nameScore = 80; // en içinde n var: "theamazingworldofgumball" ⊃ "gumball"
+  } else if (ntClean.length > 2 && ntClean.indexOf(nClean) !== -1) {
+    nameScore = 75;
+  } else if (nClean.length > 4 && neClean.indexOf(nClean) !== -1) {
+    nameScore = 70;
+  } else if (nClean.length > 4 && ntClean.indexOf(nClean) !== -1) {
+    nameScore = 70;
   }
 
   if (nameScore === 0) return 0;
 
-  // Yıl bonusu / cezası
+  // Yıl kontrolü
   if (nameYear && year) {
-    if (nameYear === year) {
-      return nameScore + 20; // yıl tam eşleşme → büyük bonus (100 veya 90+)
-    } else {
-      return 10; // yıl var ama yanlış → neredeyse elendi
-    }
+    if (nameYear === year)  return nameScore + 20; // tam yıl eşleşmesi
+    else                    return 5;              // yıl var ama yanlış → elendi
   }
 
   return nameScore;
@@ -196,18 +190,12 @@ function findContent(info, mediaType) {
 
         var candidates = results
           .map(function(item) {
-            return {
-              item:  item,
-              score: scoreItem(item, info.titleEn, info.titleTr, info.year)
-            };
+            return { item: item, score: scoreItem(item, info.titleEn, info.titleTr, info.year) };
           })
           .filter(function(c) { return c.score >= 70; })
           .sort(function(a, b) { return b.score - a.score; });
 
         if (!candidates.length) return null;
-
-        // En yüksek skorlu adayı al
-        // Eşit skorlu birden fazla varsa ilkini al (score yeterince ayırt edici)
         return candidates[0].item;
       });
     });
@@ -221,7 +209,6 @@ function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
 
   var promises = [];
   for (var s = 1; s < seasonNum; s++) {
-    // IIFE ile closure hatası önlenir (var s loop içinde değişiyor)
     (function(sNum) {
       promises.push(
         fetch(
@@ -240,17 +227,51 @@ function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
   });
 }
 
-// ── 4. HTML → __embeds_b64 ────────────────────────────────────
+// ── 4. HTML → embed URL'leri ─────────────────────────────────
 
+/**
+ * window.__embeds_b64 veya script içi embed URL array'ini parse eder.
+ *
+ * Strateji A: window.__embeds_b64 = 'BASE64...' → atob → JSON
+ * Strateji B: window.__embeds = ["//sibnet...", ...] (zaten decode edilmiş)
+ * Strateji C: script içindeki sibnet/mailru/mp4upload URL'lerini regex ile topla
+ */
 function parseEmbeds(html) {
-  var m = html.match(/window\.__embeds_b64\s*=\s*'([^']+)'/)
-       || html.match(/window\.__embeds_b64\s*=\s*"([^"]+)"/);
-  if (!m) return [];
-  try {
-    var decoded = decodeURIComponent(escape(atob(m[1])));
-    var arr     = JSON.parse(decoded);
-    return Array.isArray(arr) ? arr.filter(Boolean) : [];
-  } catch (e) { return []; }
+  // A: Base64
+  var b64m = html.match(/window\.__embeds_b64\s*=\s*'([^']+)'/)
+          || html.match(/window\.__embeds_b64\s*=\s*"([^"]+)"/);
+  if (b64m) {
+    try {
+      var arr = JSON.parse(decodeURIComponent(escape(atob(b64m[1]))));
+      if (Array.isArray(arr) && arr.length) return arr.filter(Boolean);
+    } catch(e) {}
+  }
+
+  // B: Doğrudan array
+  var dirm = html.match(/window\.__embeds\s*=\s*(\[[^\]]{10,}\])/);
+  if (dirm) {
+    try {
+      var arr2 = JSON.parse(dirm[1]);
+      if (Array.isArray(arr2) && arr2.length) return arr2.filter(Boolean);
+    } catch(e) {}
+  }
+
+  // C: Script taglarından URL toplama
+  var embedUrls = [];
+  var seen      = {};
+  var scriptRe  = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  var sm;
+  while ((sm = scriptRe.exec(html)) !== null) {
+    var script = sm[1];
+    var urlRe  = /["'`]((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'`\s]+|my\.mail\.ru\/video\/embed\/[^"'`\s]+|www\.mp4upload\.com\/embed-[^"'`\s]+|vidmoly\.to\/e\/[^"'`\s]+|ok\.ru\/videoembed\/[^"'`\s]+|vk\.com\/video_ext[^"'`\s]+))/gi;
+    var um;
+    while ((um = urlRe.exec(script)) !== null) {
+      var u = um[1];
+      if (!seen[u]) { seen[u] = true; embedUrls.push(u); }
+    }
+  }
+
+  return embedUrls;
 }
 
 function parseSourceNames(html) {
@@ -311,27 +332,15 @@ function extractMp4upload(embedUrl) {
   var full = toAbsolute(embedUrl);
   return fetchHtml(full, { 'User-Agent': HEADERS['User-Agent'], 'Referer': BASE_URL + '/' })
     .then(function(html) {
-      // sources:[{file:"URL"}] veya file:"URL"
       var m = html.match(/sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?:\/\/[^"']+)["']/i)
            || html.match(/[,\{]\s*file\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)/i)
            || html.match(/"file"\s*:\s*"(https?:\/\/[^"]+\.(?:mp4|m3u8)[^"]*)"/i);
       if (m && isVideoUrl(m[1]))
-        return {
-          url:  m[1],
-          type: m[1].indexOf('.m3u8') !== -1 ? 'hls' : 'direct',
-          headers: { 'Referer': full }
-        };
-
-      // Fallback: tüm URL'leri tara, video olanı seç
+        return { url: m[1], type: m[1].indexOf('.m3u8') !== -1 ? 'hls' : 'direct', headers: { 'Referer': full } };
       var allUrls = html.match(/https?:\/\/[^\s"'<>\\]+/g) || [];
       for (var i = 0; i < allUrls.length; i++) {
-        if (isVideoUrl(allUrls[i]) && allUrls[i].indexOf('mp4upload') !== -1) {
-          return {
-            url:  allUrls[i],
-            type: allUrls[i].indexOf('.m3u8') !== -1 ? 'hls' : 'direct',
-            headers: { 'Referer': full }
-          };
-        }
+        if (isVideoUrl(allUrls[i]) && allUrls[i].indexOf('mp4upload') !== -1)
+          return { url: allUrls[i], type: allUrls[i].indexOf('.m3u8') !== -1 ? 'hls' : 'direct', headers: { 'Referer': full } };
       }
       return null;
     })
@@ -365,13 +374,9 @@ function extractStream(embedUrl) {
 // ── Ana Akış ─────────────────────────────────────────────────
 
 function buildEpUrl(item, mediaType, epGlobalNo) {
-  var id   = item.id;
-  var slug = item.slug;
-
-  if (mediaType === 'movie') {
-    return BASE_URL + '/film/' + encodePath(id) + '/' + encodePath(slug);
-  }
-  return BASE_URL + '/dizi/' + encodePath(id) + '/' + encodePath(slug)
+  if (mediaType === 'movie')
+    return BASE_URL + '/film/' + encodePath(item.id) + '/' + encodePath(item.slug);
+  return BASE_URL + '/dizi/' + encodePath(item.id) + '/' + encodePath(item.slug)
        + '/' + epGlobalNo + '/-';
 }
 
