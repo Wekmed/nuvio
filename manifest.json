@@ -3,15 +3,15 @@
   "version": "1.0.5",
   "scrapers": [
     {
-      "id": "filmmodu",
-      "name": "FilmModu",
+      "id": "test0",
+      "name": "cizgivedizi",
       "description": "Türkçe dublaj ve altyazılı full HD filmler. filmmodu.ws üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
       "supportedTypes": [
         "movie"
       ],
-      "filename": "providers/filmmodu.js",
+      "filename": "cizgivedizi.js",
       "enabled": true,
       "logo": "https://filmmodu.rip/wp-content/uploads/2023/07/logo.png",
       "contentLanguage": [
@@ -21,8 +21,8 @@
       "disabledPlatforms": []
     },
     {
-      "id": "hdfilmcehennemi",
-      "name": "HDFilmCehennemi",
+      "id": "test",
+      "name": "sezonlukdizi",
       "description": "Türkçe dublaj ve altyazılı full HD film ve diziler. hdfilmcehennemi üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": "Wekmed",
@@ -30,7 +30,7 @@
         "movie",
         "tv"
       ],
-      "filename": "providers/hdfilmcehennemi.js",
+      "filename": "sezonlukdizi.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
@@ -39,132 +39,8 @@
       "disabledPlatforms": []
     },
     {
-      "id": "m3u_provider",
-      "name": "M3U Birleşik",
-      "description": "birlesik.m3u dosyasından TMDB eşleştirmeli stream. Vidmody, m3u8 ve direkt linkler desteklenir.",
-      "version": "1.0.0",
-      "author": "Wekmed",
-      "supportedTypes": [
-        "movie"
-      ],
-      "filename": "providers/m3u_provider.js",
-      "enabled": true,
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "jetfilmizle",
-      "name": "JetFilmizle",
-      "description": "Türkçe dublaj full HD filmler. jetfilmizle.net üzerinden Pixeldrain mp4 stream sağlar.",
-      "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
-      "supportedTypes": [
-        "movie"
-      ],
-      "filename": "providers/jetfilmizle.js",
-      "enabled": true,
-      "logo": "https://jetfilmizle.net/public/icons/apple-touch-icon.png",
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "webteizle",
-      "name": "WebteIzle",
-      "description": "Türkçe dublaj ve altyazılı filmler ve diziler. webteizle3.xyz üzerinden VidMoly/Sibnet/FileMoon/Dzen stream sağlar.",
-      "version": "1.0.0",
-      "author": "port: @kerimmkirac / nuvio: Wekmed",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/webteizle.js",
-      "enabled": true,
-      "logo": "https://webteizle3.xyz/images/logo.png",
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "sezonlukdizi",
-      "name": "SezonlukDizi",
-      "description": "Türkçe dublaj ve altyazılı diziler. sezonlukdizi8.com üzerinden VidMoly/Sibnet stream sağlar.",
-      "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
-      "supportedTypes": [
-        "tv"
-      ],
-      "filename": "providers/sezonlukdizi.js",
-      "enabled": true,
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "fullhdfilmizlesene",
-      "name": "FullHDFilmizlesene",
-      "description": "Türkçe dublaj ve altyazılı full HD filmler. fullhdfilmizlesene.live üzerinden stream sağlar.",
-      "version": "1.0.0",
-      "author": " nuvio: Wekmed",
-      "supportedTypes": [
-        "movie"
-      ],
-      "filename": "providers/fullhdfilmizlesene.js",
-      "enabled": true,
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "cizgimax",
-      "name": "CizgiMax",
-      "description": "Türkçe çizgi film ve animasyon dizileri. cizgimax.online üzerinden 500+ içerikle full HD stream sağlar.",
-      "version": "1.0.0",
-      "author": "port: @keyiflerolsun / nuvio: Wekmed",
-      "supportedTypes": [
-        "tv"
-      ],
-      "filename": "providers/cizgimax.js",
-      "enabled": true,
-      "logo": "https://www.google.com/s2/favicons?domain=cizgimax.online&sz=64",
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "sinewix",
-      "name": "SineWix",
-      "description": "Türkçe dublaj ve altyazılı film ve diziler. SineWix üzerinden stream sağlar.",
-      "version": "1.0.0",
-      "author": "nuvio: Wekmed",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/sinewix.js",
-      "enabled": true,
-      "contentLanguage": [
-        "tr"
-      ],
-      "limited": false,
-      "disabledPlatforms": []
-    },
-    {
-      "id": "rectv",
-      "name": "RecTv",
+      "id": "test1",
+      "name": "hdfilmcehennemi.js",
       "description": "Türkçe dublaj ve altyazılı dizi ve filmler. API tabanlı, geniş içerik arşivi.",
       "version": "1.0.0",
       "author": "port: @keyiflerolsun / nuvio: Wekmed",
@@ -172,7 +48,7 @@
         "movie",
         "tv"
       ],
-      "filename": "providers/rectv.js",
+      "filename": "hdfilmcehennemi.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
