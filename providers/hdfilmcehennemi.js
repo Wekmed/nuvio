@@ -1,14 +1,6 @@
 // ============================================================
 //  HDFilmCehennemi — Nuvio Provider
 //
-//  Close  : V5 akışı — thumbnail → CDN host listesi (paralel)
-//  Rapidrame: patron mantığı — /rplayer/{id}/ → resolveVideoFromScript → decodeDcHello
-//
-//  Düzeltmeler:
-//   ✓ authority: www.hdfilmcehennemi.pro → search JSON döner
-//   ✓ subtitles: [] (undefined değil) → VTT Nuvio'da görünür
-//   ✓ CDN headers: Referer + Origin eklendi → source error düzeltildi
-//   ✓ Rapidrame: patron'un decodeDcHello (8 strateji) + resolveVideoFromScript
 // ============================================================
 
 var TMDB_API_KEY   = '500330721680edb6d5f7f12ba7cd9023';
@@ -662,50 +654,83 @@ function getVideoSource(domain, videoId, sourceName, pageReferer) {
 
 // ── Film/bölüm sayfası: alternative-links ────────────────────
 
+function _parseAlternativeLinks(html) {
+  var sources = [];
+  var altRe   = /<div[^>]+class="[^"]*alternative-links[^"]*"[^>]*data-lang="([^"]*)"[^>]*>([\s\S]*?)<\/div>/g;
+  var altM;
+  while ((altM = altRe.exec(html)) !== null) {
+    var lang  = (altM[1] || '').toUpperCase();
+    var block = altM[2];
+    var btnRe = /<button[^>]+data-video="([^"]+)"[^>]*>([\s\S]*?)<\/button>/g;
+    var btnM;
+    while ((btnM = btnRe.exec(block)) !== null) {
+      var text = btnM[2].replace(/<[^>]+>/g, '').replace(/\(HDrip Xbet\)/g, '').trim();
+      var name = (lang ? lang + ' | ' : '') + text;
+      if (btnM[1]) sources.push({ videoId: btnM[1], name: name });
+    }
+  }
+  return sources;
+}
+
+function _processSourcesSequential(domain, sources, pageUrl) {
+  // Önce Close, sonra Rapidrame — sıralı çalıştır, ikisi de sonuç listesine gir
+  var results = [];
+  var close    = sources.filter(function(s) { return s.name.toLowerCase().indexOf('rapidrame') === -1; });
+  var rapidrame = sources.filter(function(s) { return s.name.toLowerCase().indexOf('rapidrame') !== -1; });
+  var ordered  = close.concat(rapidrame); // Close önce
+
+  function next(i) {
+    if (i >= ordered.length) return Promise.resolve();
+    var src = ordered[i];
+    console.log('[HDFC] İşleniyor: ' + src.name + ' (id=' + src.videoId + ')');
+    return getVideoSource(domain, src.videoId, src.name, pageUrl)
+      .then(function(ss) {
+        ss.forEach(function(s) { results.push(s); });
+        return next(i + 1);
+      });
+  }
+  return next(0).then(function() { return results; });
+}
+
 function fetchStreamsFromPage(domain, pageUrl) {
-  return fetch(pageUrl, {
-    headers: Object.assign({}, PAGE_HEADERS, { 'Referer': domain + '/' })
-  })
-  .then(function(r) {
-    if (!r.ok) throw new Error('sayfa HTTP ' + r.status);
-    return r.text();
-  })
-  .then(function(html) {
-    console.log('[HDFC] Sayfa: ' + html.length + ' kar | ' + pageUrl);
-
-    var sources = [];
-    var altRe   = /<div[^>]+class="[^"]*alternative-links[^"]*"[^>]*data-lang="([^"]*)"[^>]*>([\s\S]*?)<\/div>/g;
-    var altM;
-    while ((altM = altRe.exec(html)) !== null) {
-      var lang  = (altM[1] || '').toUpperCase();
-      var block = altM[2];
-      var btnRe = /<button[^>]+data-video="([^"]+)"[^>]*>([\s\S]*?)<\/button>/g;
-      var btnM;
-      while ((btnM = btnRe.exec(block)) !== null) {
-        var text = btnM[2].replace(/<[^>]+>/g, '').replace(/\(HDrip Xbet\)/g, '').trim();
-        var name = (lang ? lang + ' | ' : '') + text;
-        if (btnM[1]) sources.push({ videoId: btnM[1], name: name });
-      }
-    }
-
-    console.log('[HDFC] ' + sources.length + ' kaynak');
-    if (!sources.length) return [];
-
-    var idx = 0, results = [];
-    function next() {
-      if (idx >= sources.length) return Promise.resolve();
-      var src = sources[idx++];
-      return getVideoSource(domain, src.videoId, src.name, pageUrl)
-        .then(function(ss) { ss.forEach(function(s) { results.push(s); }); return next(); });
-    }
-    var workers = [];
-    for (var i = 0; i < Math.min(4, sources.length); i++) workers.push(next());
-    return Promise.all(workers).then(function() { return results; });
-  })
-  .catch(function(e) {
-    console.log('[HDFC] fetchStreamsFromPage hata: ' + e.message);
-    return [];
+  // Önce ?router=1 ile JSON dene (Nuvio'da çalışan yol)
+  var routerUrl = pageUrl + (pageUrl.indexOf('?') === -1 ? '?router=1' : '&router=1');
+  var routerHdrs = Object.assign({}, SEARCH_HEADERS, {
+    'Referer':                  pageUrl,
+    'Mofycore-Router-Prefetch': 'false'
   });
+
+  return fetch(routerUrl, { headers: routerHdrs })
+    .then(function(r) {
+      if (!r.ok) throw new Error('router HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(json) {
+      var html = json.html || json.data || '';
+      if (typeof html !== 'string') html = JSON.stringify(html);
+      console.log('[HDFC] Router HTML: ' + html.length + ' kar');
+      return html;
+    })
+    .catch(function(e) {
+      // Fallback: direkt GET
+      console.log('[HDFC] Router hata: ' + e.message + ' → direkt GET');
+      return fetch(pageUrl, {
+        headers: Object.assign({}, PAGE_HEADERS, { 'Referer': domain + '/' })
+      })
+      .then(function(r) { return r.ok ? r.text() : ''; })
+      .catch(function() { return ''; });
+    })
+    .then(function(html) {
+      if (!html) { console.log('[HDFC] Sayfa boş'); return []; }
+      console.log('[HDFC] Sayfa ' + html.length + ' kar | ' + pageUrl);
+
+      var sources = _parseAlternativeLinks(html);
+      console.log('[HDFC] ' + sources.length + ' kaynak: ' +
+        sources.map(function(s) { return s.name; }).join(', '));
+
+      if (!sources.length) return [];
+      return _processSourcesSequential(domain, sources, pageUrl);
+    });
 }
 
 // ── Ana fonksiyon ─────────────────────────────────────────────
