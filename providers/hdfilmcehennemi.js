@@ -23,9 +23,11 @@ var CDN_HOSTS = [
   'https://srv12.cdnimages784.shop',
   'https://srv12.cdnimages965.shop',
   'https://srv12.cdnimages403.shop',
-  'https://srv12.cdnimages391.shop',
-  'https://srv12.cdnimages391.shop',
-  'https://srv12.cdnimages391.shop',
+  'https://srv1.cdnimages391.shop',
+  'https://srv2.cdnimages391.shop',
+  'https://srv3.cdnimages391.shop',
+  'https://cdn1.cdnimages1128.shop',
+  'https://srv10.cdnimages1128.shop'
 ];
 
 var FALLBACK_DOMAINS = [
@@ -723,13 +725,18 @@ function fetchStreamsFromPage(domain, pageUrl) {
       return html;
     })
     .catch(function(e) {
-      // Fallback: direkt GET
-      console.log('[HDFC] Router hata: ' + e.message + ' → direkt GET');
-      return fetch(pageUrl, {
-        headers: Object.assign({}, PAGE_HEADERS, { 'Referer': domain + '/' })
-      })
-      .then(function(r) { return r.ok ? r.text() : ''; })
-      .catch(function() { return ''; });
+      // Fallback: authority header ile direkt GET
+      console.log('[HDFC] Router hata: ' + e.message + ' → authority GET');
+      var fbHdrs = Object.assign({}, SEARCH_HEADERS, {
+        'Accept':  'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': domain + '/'
+      });
+      return fetch(pageUrl, { headers: fbHdrs })
+        .then(function(r) {
+          console.log('[HDFC] Fallback GET: HTTP ' + r.status);
+          return r.ok ? r.text() : '';
+        })
+        .catch(function() { return ''; });
     })
     .then(function(html) {
       if (!html) { console.log('[HDFC] Sayfa boş'); return []; }
