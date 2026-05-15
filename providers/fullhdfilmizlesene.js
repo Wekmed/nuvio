@@ -1,7 +1,5 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
- * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
- * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -222,6 +220,15 @@ function fetchAtom(apiBase, vidid, movieTitle, baseUrl) {
                             streams.sort(function(a,b){
                                 return order.indexOf(a.quality) - order.indexOf(b.quality);
                             });
+                            // 720p+ varsa altını çıkarma; hiç yoksa hepsini göster
+                            var hasHD = streams.some(function(s){
+                                return s.quality === '1080p' || s.quality === '720p' || s.quality === '4K';
+                            });
+                            if (hasHD) {
+                                streams = streams.filter(function(s){
+                                    return s.quality === '1080p' || s.quality === '720p' || s.quality === '4K';
+                                });
+                            }
                             return streams.length ? streams : null;
                         })
                         .catch(function() {
