@@ -1,5 +1,7 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
+ * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
+ * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -29,7 +31,7 @@ function getBaseUrl() {
             for (var i = 0; i < lines.length; i++) {
                 var l = lines[i].trim();
                 // Satır formatı: fullhdfilmizlesene=https://www.site.live
-                if (l.toLowerCase().indexOf('|FullHDFilmizlesene:') === 0) {
+                if (l.toLowerCase().indexOf('fullhdfilmizlesene=') === 0) {
                     var d = l.substring(19).trim().replace(/\/$/, '');
                     if (d) { _domain = d; _domainTs = Date.now(); return d; }
                 }
