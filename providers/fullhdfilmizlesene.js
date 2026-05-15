@@ -222,15 +222,6 @@ function fetchAtom(apiBase, vidid, movieTitle, baseUrl) {
                             streams.sort(function(a,b){
                                 return order.indexOf(a.quality) - order.indexOf(b.quality);
                             });
-                            // 720p+ varsa altını çıkarma; hiç yoksa hepsini göster
-                            var hasHD = streams.some(function(s){
-                                return s.quality === '1080p' || s.quality === '720p' || s.quality === '4K';
-                            });
-                            if (hasHD) {
-                                streams = streams.filter(function(s){
-                                    return s.quality === '1080p' || s.quality === '720p' || s.quality === '4K';
-                                });
-                            }
                             return streams.length ? streams : null;
                         })
                         .catch(function() {
@@ -289,17 +280,7 @@ function getStreamsFromVidid(vidid, movieTitle, baseUrl) {
         fetchAtom(apiBase, vidid, movieTitle, baseUrl),
         fetchTurbo(apiBase, vidid, movieTitle, baseUrl)
     ]).then(function(results) {
-        // fetchAtom array döndürüyor, fetchTurbo tek obje — ikisini düzleştir
-        var flat = [];
-        results.forEach(function(r) {
-            if (!r) return;
-            if (Array.isArray(r)) {
-                r.forEach(function(s) { if (s) flat.push(s); });
-            } else {
-                flat.push(r);
-            }
-        });
-        return flat;
+        return results.filter(function(r) { return r !== null; });
     });
 }
 
