@@ -4,12 +4,12 @@
   "scrapers": [
     {
   "id": "diziyou",
-  "name": "DiziYou",
+  "name": "Dizipal",
   "description": "Türk dizi ve filmler — Türkçe altyazı & dublaj desteği",
   "version": "1.0.0",
   "author": "Nuvio uyarlaması (kaynak: CloudStream DiziYou)",
   "supportedTypes": ["tv", "movie"],
-  "filename": "diziyou.js",
+  "filename": "dizipal.js",
   "enabled": true,
   "logo": "https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/diziyou.png"
     },
