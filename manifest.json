@@ -144,6 +144,7 @@
       "limited": false,
       "disabledPlatforms": []
     },
+  
     {
       "id": "cizgivedizi",
       "name": "CizgiveDizi",
@@ -151,7 +152,7 @@
       "version": "1.0.0",
       "author": "nuvio: Wekmed",
       "supportedTypes": [
-        "movie"
+        "movie",
         "tv"
       ],
       "filename": "providers/cizgivedizi.js",
