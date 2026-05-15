@@ -1,6 +1,8 @@
-//**
-// DiziYou Provider for Nuvio
- 
+/**
+ * DiziYou Provider for Nuvio
+ *
+ */
+ //
 // ─── Sabitler ─────────────────────────────────────────────────────────────────
 
 var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
@@ -24,7 +26,7 @@ function getBaseUrl() {
       var lines = text.split('\n');
       for (var i = 0; i < lines.length; i++) {
         var l = lines[i].trim();
-        if (l.toLowerCase().indexOf('|DiziYou:') === 0) {
+        if (l.toLowerCase().indexOf('diziyou=') === 0) {
           var d = l.substring(8).trim().replace(/\/$/, '');
           if (d) { _domain = d; _domainTs = Date.now(); return d; }
         }
@@ -217,58 +219,85 @@ function resolveEpisodeUrl(baseUrl, info, season, episode) {
 
 // ─── Stream oluşturucu ────────────────────────────────────────────────────────
 
-function buildStreams(playerId, episodeUrl) {
-  var playerUrl = BASE_URL + '/player/' + playerId + '.html';
-  var epBase    = STORAGE_URL + '/episodes/' + playerId;
-  var subBase   = STORAGE_URL + '/subtitles/' + playerId;
+/**
+ * Altyazı URL kuralı:
+ *   Türkçe altyazılı (EN ses):  player/{id}.html    → subtitles/{id}/tr.vtt + en.vtt
+ *   Türkçe dublaj       (TR ses): player/{id}_tr.html → subtitles/{id}_tr/tr.vtt
+ *   İngilizce altyazılı (EN ses): player/{id}.html    → subtitles/{id}/en.vtt (default)
+ *
+ * Stream URL kuralı:
+ *   Türkçe altyazılı + İngilizce: episodes/{id}/play.m3u8
+ *   Türkçe dublaj:                 episodes/{id}_tr/play.m3u8
+ */
+function buildSingleStream(playerId, isDub, episodeUrl) {
+  var suffix    = isDub ? '_tr' : '';
+  var playerUrl = BASE_URL + '/player/' + playerId + suffix + '.html';
+  var epBase    = STORAGE_URL + '/episodes/' + playerId + suffix;
+  // Altyazı base: dublajda {id}_tr/, altyazılıda {id}/
+  var subBase   = STORAGE_URL + '/subtitles/' + playerId + suffix;
+  // Orijinal (şifresiz) altyazı base her zaman {id}/ altında
+  var subOrig   = STORAGE_URL + '/subtitles/' + playerId;
 
   return get(playerUrl, episodeUrl)
     .then(function(ph) {
-      // source src
       var srcM = ph.match(/id=["']diziyouSource["'][^>]*src=["']([^"']+)["']/i)
               || ph.match(/src=["']([^"']+\.m3u8[^"']*)["'][^>]*type=["']application\/x-mpegURL["']/i);
       var m3u8 = srcM ? srcM[1] : (epBase + '/play.m3u8');
 
-      // altyazı track'leri
       var trM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']tr["']/i)
              || ph.match(/<track[^>]+srclang=["']tr["'][^>]*src=["']([^"']+)["']/i);
       var enM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']en["']/i)
              || ph.match(/<track[^>]+srclang=["']en["'][^>]*src=["']([^"']+)["']/i);
+
+      // Dublajda: tr.vtt → {id}_tr/tr.vtt, ingilizce altyazı yok
+      // Altyazılıda: tr.vtt + en.vtt → {id}/tr.vtt, {id}/en.vtt
       var trVtt = trM ? trM[1] : (subBase + '/tr.vtt');
-      var enVtt = enM ? enM[1] : (subBase + '/en.vtt');
+      var enVtt = enM ? enM[1] : (subOrig + '/en.vtt');
 
-      var hdrs = { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA };
-
-      console.log('[DiziYou] ✅ m3u8=' + m3u8);
-      return [
-        {
-          name:      'DiziYou',
-          title:     'DiziYou — Türkçe Altyazılı',
-          url:       m3u8,
-          quality:   '1080p',
-          headers:   hdrs,
-          subtitles: [
+      var subtitles = isDub
+        ? [{ language: 'tr', url: trVtt, label: 'Türkçe' }]
+        : [
             { language: 'tr', url: trVtt, label: 'Türkçe' },
             { language: 'en', url: enVtt, label: 'English' },
-          ],
-        },
-      ];
+          ];
+
+      return {
+        name:      'DiziYou',
+        title:     isDub ? 'DiziYou — Türkçe Dublaj' : 'DiziYou — Türkçe Altyazılı',
+        url:       m3u8,
+        quality:   '1080p',
+        headers:   { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
+        subtitles: subtitles,
+      };
     })
     .catch(function() {
-      // Player sayfasına erişilemezse doğrudan URL'yi kullan
-      console.warn('[DiziYou] Player HTML alınamadı, direkt URL kullanılıyor.');
-      return [{
+      // Player HTML alınamazsa doğrudan URL kullan
+      var subtitles = isDub
+        ? [{ language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe' }]
+        : [
+            { language: 'tr', url: subOrig + '/tr.vtt', label: 'Türkçe' },
+            { language: 'en', url: subOrig + '/en.vtt', label: 'English' },
+          ];
+      return {
         name:      'DiziYou',
-        title:     'DiziYou — Türkçe Altyazılı',
+        title:     isDub ? 'DiziYou — Türkçe Dublaj' : 'DiziYou — Türkçe Altyazılı',
         url:       epBase + '/play.m3u8',
         quality:   '1080p',
         headers:   { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
-        subtitles: [
-          { language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe' },
-          { language: 'en', url: subBase + '/en.vtt', label: 'English' },
-        ],
-      }];
+        subtitles: subtitles,
+      };
     });
+}
+
+function buildStreams(playerId, episodeUrl) {
+  console.log('[DiziYou] ✅ player_id=' + playerId);
+  // Her iki versiyonu paralel çek
+  return Promise.all([
+    buildSingleStream(playerId, false, episodeUrl), // Türkçe Altyazılı (EN ses)
+    buildSingleStream(playerId, true,  episodeUrl), // Türkçe Dublaj    (TR ses)
+  ]).then(function(results) {
+    return results.filter(Boolean);
+  });
 }
 
 // ─── Ana fonksiyon ────────────────────────────────────────────────────────────
