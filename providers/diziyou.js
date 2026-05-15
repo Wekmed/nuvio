@@ -1,8 +1,7 @@
 /**
  * DiziYou Provider for Nuvio
- *
  */
- //
+
 // ─── Sabitler ─────────────────────────────────────────────────────────────────
 
 var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
@@ -255,10 +254,10 @@ function buildSingleStream(playerId, isDub, episodeUrl) {
       var enVtt = enM ? enM[1] : (subOrig + '/en.vtt');
 
       var subtitles = isDub
-        ? [{ language: 'tr', url: trVtt, label: 'Türkçe' }]
+        ? [{ language: 'tr', url: trVtt, label: 'Türkçe', type: 'vtt' }]
         : [
-            { language: 'tr', url: trVtt, label: 'Türkçe' },
-            { language: 'en', url: enVtt, label: 'English' },
+            { language: 'tr', url: trVtt, label: 'Türkçe', type: 'vtt' },
+            { language: 'en', url: enVtt, label: 'English', type: 'vtt' },
           ];
 
       return {
@@ -273,10 +272,10 @@ function buildSingleStream(playerId, isDub, episodeUrl) {
     .catch(function() {
       // Player HTML alınamazsa doğrudan URL kullan
       var subtitles = isDub
-        ? [{ language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe' }]
+        ? [{ language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe', type: 'vtt' }]
         : [
-            { language: 'tr', url: subOrig + '/tr.vtt', label: 'Türkçe' },
-            { language: 'en', url: subOrig + '/en.vtt', label: 'English' },
+            { language: 'tr', url: subOrig + '/tr.vtt', label: 'Türkçe', type: 'vtt' },
+            { language: 'en', url: subOrig + '/en.vtt', label: 'English', type: 'vtt' },
           ];
       return {
         name:      'DiziYou',
