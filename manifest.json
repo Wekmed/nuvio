@@ -15,7 +15,7 @@
     },
     {
       "id": "test",
-      "name": "sezonlukdizi",
+      "name": "diziyou",
       "description": "Türkçe dublaj ve altyazılı full HD film ve diziler. hdfilmcehennemi üzerinden stream sağlar.",
       "version": "1.0.0",
       "author": "Wekmed",
@@ -23,7 +23,7 @@
         "movie",
         "tv"
       ],
-      "filename": "sezonlukdizi.js",
+      "filename": "diziyou.js",
       "enabled": true,
       "contentLanguage": [
         "tr"
