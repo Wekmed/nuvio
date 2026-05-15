@@ -1,5 +1,7 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
+ * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
+ * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -295,7 +297,10 @@ function searchAndMatch(query, allTitles, targetYear, baseUrl) {
                 var score = matchScore(siteTitle, allTitles);
                 console.error('[FULLHDFILM] Aday: ' + siteTitle + ' (' + siteYear + ') → ' + score + ' puan');
 
-                if (score >= 500) {
+    // Yıl eşleşiyorsa düşük skor yeterli — yıl zaten yanlış filmi eler
+                // Yılsız aramada ise eşik yüksek kalır (Cars ≠ Cars 3 koruması)
+                var minScore = targetYear ? 50 : 500;
+                if (score >= minScore) {
                     candidates.push({ link: link, score: score, title: siteTitle, year: siteYear });
                 }
             });
