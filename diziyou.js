@@ -1,31 +1,20 @@
 /**
  * DiziYou Provider for Nuvio
- *
- * Gerçek yapı (network + HTML analizinden kesinleşti):
- *
- *   Bölüm sayfası:  https://www.diziyou.one/{slug}/
- *   ├─ iframe#diziyouPlayer src="https://www.diziyou.one/player/95039.html"
- *   └─ .otherepisodes a → aynı sezonun diğer bölümleri
- *
- *   Player HTML:    https://www.diziyou.one/player/95039.html
- *   ├─ <source id="diziyouSource" src="https://storage.diziyou.one/episodes/95039/play.m3u8">
- *   ├─ <track srclang="tr" src="https://storage.diziyou.one/subtitles/95039/tr.vtt">
- *   └─ <track srclang="en" src="https://storage.diziyou.one/subtitles/95039/en.vtt">
- *
- *   M3U8 master: storage.diziyou.one/episodes/{id}/play.m3u8
- *   → 480p / 720p / 1080p segmentler
- *
- *   Şifreleme: YOK | Cloudflare: Sadece insights (pasif) | Hermes: TAM UYUMLU
+ * Bölüm: https://www.diziyou.one/{slug}/
+ *   iframe#diziyouPlayer → /player/{id}.html
+ *   /player/{id}.html    → source src=storage.diziyou.one/episodes/{id}/play.m3u8
+ *                        → track srclang=tr  → subtitles/{id}/tr.vtt
+ *                        → track srclang=en  → subtitles/{id}/en.vtt
+ * Dublaj: player/{id}_tr.html → episodes/{id}_tr/play.m3u8
+ *                             → subtitles/{id}_tr/tr.vtt
  */
 
-// ─── Sabitler ─────────────────────────────────────────────────────────────────
-
 var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
-var BASE_URL        = 'https://www.diziyou.one';
-var STORAGE_URL     = 'https://storage.diziyou.one';
-var TMDB_KEY        = 'c4ffcab48dfaa7b41625ac13d61aec31';
-var CACHE_MS        = 60 * 60 * 1000;
-var UA              = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+var BASE_URL    = 'https://www.diziyou.one';
+var STORAGE_URL = 'https://storage.diziyou.one';
+var TMDB_KEY    = 'c4ffcab48dfaa7b41625ac13d61aec31';
+var CACHE_MS    = 3600000;
+var UA          = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 // ─── Domain cache ─────────────────────────────────────────────────────────────
 
@@ -41,7 +30,7 @@ function getBaseUrl() {
       var lines = text.split('\n');
       for (var i = 0; i < lines.length; i++) {
         var l = lines[i].trim();
-        if (l.toLowerCase().indexOf('|DiziYou:') === 0) {
+        if (l.toLowerCase().indexOf('diziyou=') === 0) {
           var d = l.substring(8).trim().replace(/\/$/, '');
           if (d) { _domain = d; _domainTs = Date.now(); return d; }
         }
@@ -62,23 +51,19 @@ function get(url, referer) {
       'Referer': referer || BASE_URL + '/',
     }
   }).then(function(r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.text();
   });
 }
 
-// ─── Slug dönüştürücü ────────────────────────────────────────────────────────
+// ─── Slug ─────────────────────────────────────────────────────────────────────
 
 var TR_MAP = { 'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c','Ğ':'g','Ü':'u','Ş':'s','İ':'i','Ö':'o','Ç':'c' };
 function trSlug(s) {
   return s.replace(/[ğüşıöçĞÜŞİÖÇ]/g, function(c) { return TR_MAP[c] || c; })
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
-
-// "the-boys" + 5 + 7 → "the-boys-5-sezon-7-bolum"
-function epSlug(showSlug, s, e) {
-  return showSlug + '-' + s + '-sezon-' + e + '-bolum';
-}
+function epSlug(show, s, e) { return show + '-' + s + '-sezon-' + e + '-bolum'; }
 
 // ─── TMDB ─────────────────────────────────────────────────────────────────────
 
@@ -89,30 +74,27 @@ function getTmdbInfo(tmdbId, mediaType) {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       return {
-        title:    (d.name  || d.title  || '').trim(),
-        origTitle:(d.original_name || d.original_title || '').trim(),
+        title:     (d.name || d.title || '').trim(),
+        origTitle: (d.original_name || d.original_title || '').trim(),
       };
     });
 }
 
-// ─── HTML parser ──────────────────────────────────────────────────────────────
+// ─── HTML helpers ─────────────────────────────────────────────────────────────
 
-// iframe#diziyouPlayer → player id
 function extractPlayerId(html) {
-  // Sırası: önce id= src=, sonra src= id=
-  var patterns = [
+  var pats = [
     /id=["']diziyouPlayer["'][^>]+src=["'][^"']*\/player\/(\d+)\.html/i,
     /src=["'][^"']*\/player\/(\d+)\.html["'][^>]*id=["']diziyouPlayer["']/i,
     /["']https?:\/\/[^"']*\/player\/(\d+)\.html["']/i,
   ];
-  for (var i = 0; i < patterns.length; i++) {
-    var m = html.match(patterns[i]);
+  for (var i = 0; i < pats.length; i++) {
+    var m = html.match(pats[i]);
     if (m) return m[1];
   }
   return null;
 }
 
-// .otherepisodes blokları → [{season, episode, url}]
 function parseEpisodes(html) {
   var list = [];
   var re = /<div[^>]+class="[^"]*otherepisodes[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
@@ -122,7 +104,7 @@ function parseEpisodes(html) {
     var hM = block.match(/href=["']([^"']+)["']/i);
     var nM = block.match(/class="[^"]*epidosename[^"]*"[^>]*>([\s\S]*?)<\/(?:div|a)>/i);
     if (!hM || !nM) continue;
-    var name = nM[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    var name = nM[1].replace(/<[^>]+>/g, '').trim();
     var sM = name.match(/(\d+)\.\s*Sezon/i);
     var eM = name.match(/(\d+)\.\s*B[oö]l[uü]m/i);
     if (sM && eM) list.push({ season: +sM[1], episode: +eM[1], url: hM[1] });
@@ -130,7 +112,7 @@ function parseEpisodes(html) {
   return list;
 }
 
-// ─── Benzerlik ────────────────────────────────────────────────────────────────
+// ─── Similarity ───────────────────────────────────────────────────────────────
 
 function sim(a, b) {
   if (!a || !b) return 0;
@@ -142,7 +124,7 @@ function sim(a, b) {
   return c / Math.max(aw.length, bw.length);
 }
 
-// ─── URL çözümleme ────────────────────────────────────────────────────────────
+// ─── URL resolution ───────────────────────────────────────────────────────────
 
 function tryGet(url, referer) {
   return get(url, referer)
@@ -156,36 +138,34 @@ function tryGet(url, referer) {
 function resolveEpisodeUrl(baseUrl, info, season, episode) {
   var slugEn = trSlug(info.origTitle);
   var slugTr = trSlug(info.title);
-  var referer = baseUrl + '/';
+  var ref = baseUrl + '/';
 
-  // 1. Direkt slug tahminleri (en hızlı)
+  // 1. Direct slug
   var candidates = [];
   if (slugEn) candidates.push(baseUrl + '/' + epSlug(slugEn, season, episode) + '/');
   if (slugTr && slugTr !== slugEn) candidates.push(baseUrl + '/' + epSlug(slugTr, season, episode) + '/');
 
   function tryList(i) {
     if (i >= candidates.length) return Promise.resolve(null);
-    return tryGet(candidates[i], referer).then(function(r) {
-      return r || tryList(i + 1);
-    });
+    return tryGet(candidates[i], ref).then(function(r) { return r || tryList(i + 1); });
   }
 
   return tryList(0).then(function(r) {
     if (r) return r;
 
-    // 2. Önce dizi ana sayfası dene → bölüm listesinden bul
-    var showCandidates = [];
-    if (slugEn) showCandidates.push(baseUrl + '/' + slugEn + '/');
-    if (slugTr && slugTr !== slugEn) showCandidates.push(baseUrl + '/' + slugTr + '/');
+    // 2. Show page → episode list
+    var showCands = [];
+    if (slugEn) showCands.push(baseUrl + '/' + slugEn + '/');
+    if (slugTr && slugTr !== slugEn) showCands.push(baseUrl + '/' + slugTr + '/');
 
     function tryShow(i) {
-      if (i >= showCandidates.length) return Promise.resolve(null);
-      return get(showCandidates[i], referer)
-        .then(function(showHtml) {
-          var eps = parseEpisodes(showHtml);
+      if (i >= showCands.length) return Promise.resolve(null);
+      return get(showCands[i], ref)
+        .then(function(html) {
+          var eps = parseEpisodes(html);
           for (var k = 0; k < eps.length; k++) {
             if (eps[k].season === season && eps[k].episode === episode)
-              return tryGet(eps[k].url, referer);
+              return tryGet(eps[k].url, ref);
           }
           return null;
         })
@@ -197,117 +177,198 @@ function resolveEpisodeUrl(baseUrl, info, season, episode) {
   }).then(function(r) {
     if (r) return r;
 
-    // 3. Arama sayfası
-    console.log('[DiziYou] Slug denemeleri başarısız, arama yapılıyor...');
+    // 3. Search
     var q = info.title || info.origTitle;
-    return get(baseUrl + '/?s=' + encodeURIComponent(q), referer)
-      .then(function(searchHtml) {
-        // arama sonuçlarındaki show linklerini topla
-        var showRe = /href=["'](https?:\/\/(?:www\.)?diziyou\.[a-z]+\/([^"'\/]+)\/)["'][^>]*title=["']([^"']+)["']/gi;
-        var shows = [];
-        var sm;
-        while ((sm = showRe.exec(searchHtml)) !== null) {
-          shows.push({ url: sm[1], title: sm[3] });
-        }
-        // en iyi eşleşmeyi bul
+    return get(baseUrl + '/?s=' + encodeURIComponent(q), ref)
+      .then(function(html) {
+        var re2 = /href=["'](https?:\/\/(?:www\.)?diziyou\.[a-z]+\/([^"'\/]+)\/)[^>]*title=["']([^"']+)["']/gi;
+        var shows = [], sm;
+        while ((sm = re2.exec(html)) !== null) shows.push({ url: sm[1], title: sm[3] });
         var best = null, bestScore = 0.3;
         shows.forEach(function(s) {
-          var score = Math.max(sim(s.title, info.title), sim(s.title, info.origTitle));
-          if (score > bestScore) { bestScore = score; best = s; }
+          var sc = Math.max(sim(s.title, info.title), sim(s.title, info.origTitle));
+          if (sc > bestScore) { bestScore = sc; best = s; }
         });
         if (!best) return null;
-        console.log('[DiziYou] Arama eşleşti: ' + best.title + ' (' + bestScore.toFixed(2) + ')');
-
-        return get(best.url, referer).then(function(showHtml) {
+        return get(best.url, ref).then(function(showHtml) {
           var eps = parseEpisodes(showHtml);
           for (var k = 0; k < eps.length; k++) {
             if (eps[k].season === season && eps[k].episode === episode)
-              return tryGet(eps[k].url, referer);
+              return tryGet(eps[k].url, ref);
           }
-          // Bölüm listesinde yoksa dizi slug'ından tahmin et
-          var showSlug = best.url.replace(/\/$/, '').split('/').pop();
-          return tryGet(baseUrl + '/' + epSlug(showSlug, season, episode) + '/', referer);
+          var sl = best.url.replace(/\/$/, '').split('/').pop();
+          return tryGet(baseUrl + '/' + epSlug(sl, season, episode) + '/', ref);
         });
       });
   });
 }
 
-// ─── Stream oluşturucu ────────────────────────────────────────────────────────
+// ─── M3U8 subtitle injection ──────────────────────────────────────────────────
 
-function buildStreams(playerId, episodeUrl) {
-  var playerUrl = BASE_URL + '/player/' + playerId + '.html';
-  var epBase    = STORAGE_URL + '/episodes/' + playerId;
-  var subBase   = STORAGE_URL + '/subtitles/' + playerId;
+function injectSubtitlesIntoM3u8(text, m3u8Url, subs) {
+  var base = m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
+  var lines = text.split('\n');
+  var out = [];
+  var injected = false;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) { out.push(''); continue; }
+
+    // Before first #EXT-X-STREAM-INF insert subtitle tracks
+    if (!injected && line.indexOf('#EXT-X-STREAM-INF') === 0) {
+      for (var j = 0; j < subs.length; j++) {
+        var s = subs[j];
+        var def = s.isDefault ? 'YES' : 'NO';
+        out.push(
+          '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs"' +
+          ',NAME="' + s.name + '"' +
+          ',DEFAULT=' + def + ',AUTOSELECT=' + def +
+          ',FORCED=NO,LANGUAGE="' + s.lang + '"' +
+          ',URI="' + s.url + '"'
+        );
+      }
+      injected = true;
+    }
+
+    // Add SUBTITLES="subs" to each stream variant
+    if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+      if (line.indexOf('SUBTITLES=') === -1) line = line + ',SUBTITLES="subs"';
+      out.push(line);
+      continue;
+    }
+
+    // Make segment URLs absolute
+    if (line.charAt(0) !== '#') {
+      if (line.indexOf('http') !== 0) line = base + line;
+      out.push(line);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return out.join('\n');
+}
+
+function fetchAndInjectM3u8(m3u8Url, subs, referer) {
+  return fetch(m3u8Url, {
+    headers: { 'User-Agent': UA, 'Referer': referer || BASE_URL + '/', 'Origin': BASE_URL }
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('m3u8 ' + r.status);
+    return r.text();
+  })
+  .then(function(text) {
+    var modified = injectSubtitlesIntoM3u8(text, m3u8Url, subs);
+    var b64 = btoa(unescape(encodeURIComponent(modified)));
+    return 'data:application/vnd.apple.mpegurl;base64,' + b64;
+  });
+}
+
+// ─── Stream builder ───────────────────────────────────────────────────────────
+
+function buildSingleStream(playerId, isDub, episodeUrl) {
+  var suffix  = isDub ? '_tr' : '';
+  var epBase  = STORAGE_URL + '/episodes/' + playerId + suffix;
+  var subBase = STORAGE_URL + '/subtitles/' + playerId + suffix;
+  var subOrig = STORAGE_URL + '/subtitles/' + playerId;
+  var playerUrl = BASE_URL + '/player/' + playerId + suffix + '.html';
+  var label = isDub ? 'DiziYou - Turkce Dublaj' : 'DiziYou - Turkce Altyazili';
 
   return get(playerUrl, episodeUrl)
     .then(function(ph) {
-      // source src
       var srcM = ph.match(/id=["']diziyouSource["'][^>]*src=["']([^"']+)["']/i)
               || ph.match(/src=["']([^"']+\.m3u8[^"']*)["'][^>]*type=["']application\/x-mpegURL["']/i);
-      var m3u8 = srcM ? srcM[1] : (epBase + '/play.m3u8');
+      var m3u8Url = srcM ? srcM[1] : (epBase + '/play.m3u8');
 
-      // altyazı track'leri
       var trM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']tr["']/i)
              || ph.match(/<track[^>]+srclang=["']tr["'][^>]*src=["']([^"']+)["']/i);
       var enM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']en["']/i)
              || ph.match(/<track[^>]+srclang=["']en["'][^>]*src=["']([^"']+)["']/i);
+
       var trVtt = trM ? trM[1] : (subBase + '/tr.vtt');
-      var enVtt = enM ? enM[1] : (subBase + '/en.vtt');
+      var enVtt = enM ? enM[1] : (subOrig + '/en.vtt');
+
+      // HLS injection için subs (M3U8 içine gömülür)
+      var m3u8Subs = isDub
+        ? [{ name: 'Turkce',  lang: 'tr', url: trVtt, isDefault: true }]
+        : [
+            { name: 'Turkce',  lang: 'tr', url: trVtt, isDefault: true  },
+            { name: 'English', lang: 'en', url: enVtt, isDefault: false },
+          ];
+
+      // Nuvio stream objesindeki subtitles: [{ url, lang }] formatı
+      var streamSubs = isDub
+        ? [{ url: trVtt, lang: 'tr' }]
+        : [
+            { url: trVtt, lang: 'tr' },
+            { url: enVtt, lang: 'en' },
+          ];
 
       var hdrs = { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA };
 
-      console.log('[DiziYou] ✅ m3u8=' + m3u8);
-      return [
-        {
-          name:      'DiziYou',
-          title:     'DiziYou — Türkçe Altyazılı',
-          url:       m3u8,
-          quality:   '1080p',
-          headers:   hdrs,
-          subtitles: [
-            { language: 'tr', url: trVtt, label: 'Türkçe' },
-            { language: 'en', url: enVtt, label: 'English' },
-          ],
-        },
-      ];
+      return fetchAndInjectM3u8(m3u8Url, m3u8Subs, episodeUrl)
+        .then(function(dataUri) {
+          return { name: 'DiziYou', title: label, url: dataUri, quality: '1080p', headers: hdrs, subtitles: streamSubs };
+        })
+        .catch(function() {
+          return { name: 'DiziYou', title: label, url: m3u8Url, quality: '1080p', headers: hdrs, subtitles: streamSubs };
+        });
     })
     .catch(function() {
-      // Player sayfasına erişilemezse doğrudan URL'yi kullan
-      console.warn('[DiziYou] Player HTML alınamadı, direkt URL kullanılıyor.');
-      return [{
-        name:      'DiziYou',
-        title:     'DiziYou — Türkçe Altyazılı',
-        url:       epBase + '/play.m3u8',
-        quality:   '1080p',
-        headers:   { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
-        subtitles: [
-          { language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe' },
-          { language: 'en', url: subBase + '/en.vtt', label: 'English' },
-        ],
-      }];
+      var m3u8Url = epBase + '/play.m3u8';
+      var trVtt2 = subBase + '/tr.vtt';
+      var enVtt2 = subOrig + '/en.vtt';
+      var m3u8Subs = isDub
+        ? [{ name: 'Turkce',  lang: 'tr', url: trVtt2, isDefault: true  }]
+        : [
+            { name: 'Turkce',  lang: 'tr', url: trVtt2, isDefault: true  },
+            { name: 'English', lang: 'en', url: enVtt2, isDefault: false },
+          ];
+      var streamSubs = isDub
+        ? [{ url: trVtt2, lang: 'tr' }]
+        : [
+            { url: trVtt2, lang: 'tr' },
+            { url: enVtt2, lang: 'en' },
+          ];
+      var hdrs = { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA };
+      return fetchAndInjectM3u8(m3u8Url, m3u8Subs, episodeUrl)
+        .then(function(dataUri) {
+          return { name: 'DiziYou', title: label, url: dataUri, quality: '1080p', headers: hdrs, subtitles: streamSubs };
+        })
+        .catch(function() {
+          return { name: 'DiziYou', title: label, url: m3u8Url, quality: '1080p', headers: hdrs, subtitles: streamSubs };
+        });
     });
 }
 
-// ─── Ana fonksiyon ────────────────────────────────────────────────────────────
+function buildStreams(playerId, episodeUrl) {
+  console.log('[DiziYou] player_id=' + playerId);
+  return Promise.all([
+    buildSingleStream(playerId, false, episodeUrl),
+    buildSingleStream(playerId, true,  episodeUrl),
+  ]).then(function(results) {
+    return results.filter(Boolean);
+  });
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  console.log('[DiziYou] getStreams → tmdbId=' + tmdbId + ' type=' + mediaType +
-    (season ? ' S' + season + 'E' + episode : ''));
-
+  console.log('[DiziYou] ' + tmdbId + ' ' + mediaType + ' S' + season + 'E' + episode);
   return getBaseUrl()
     .then(function(baseUrl) {
       return getTmdbInfo(tmdbId, mediaType)
         .then(function(info) {
-          console.log('[DiziYou] TMDB: "' + info.title + '" / "' + info.origTitle + '"');
+          console.log('[DiziYou] ' + info.title + ' / ' + info.origTitle);
           if (mediaType === 'movie') {
             var slugEn = trSlug(info.origTitle);
             var slugTr = trSlug(info.title);
-            var candidates = [baseUrl + '/' + slugEn + '/', baseUrl + '/' + slugTr + '/'];
+            var cands = [baseUrl + '/' + slugEn + '/', baseUrl + '/' + slugTr + '/'];
             function tryMovie(i) {
-              if (i >= candidates.length) return Promise.resolve(null);
-              return tryGet(candidates[i], baseUrl + '/').then(function(r) {
-                return r || tryMovie(i + 1);
-              });
+              if (i >= cands.length) return Promise.resolve(null);
+              return tryGet(cands[i], baseUrl + '/').then(function(r) { return r || tryMovie(i + 1); });
             }
             return tryMovie(0);
           }
@@ -315,14 +376,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
         });
     })
     .then(function(result) {
-      if (!result) {
-        console.warn('[DiziYou] Bölüm bulunamadı.');
-        return [];
-      }
+      if (!result) { console.warn('[DiziYou] bulunamadi'); return []; }
       return buildStreams(result.playerId, result.url);
     })
     .catch(function(err) {
-      console.error('[DiziYou] Hata: ' + err.message);
+      console.error('[DiziYou] ' + err.message);
       return [];
     });
 }
