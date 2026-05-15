@@ -1,14 +1,5 @@
 // ============================================================
 //  HDFilmCehennemi — Nuvio Provider
-//
-//  Close  : V5 akışı — thumbnail → CDN host listesi (paralel)
-//  Rapidrame: patron mantığı — /rplayer/{id}/ → resolveVideoFromScript → decodeDcHello
-//
-//  Düzeltmeler:
-//   ✓ authority: www.hdfilmcehennemi.pro → search JSON döner
-//   ✓ subtitles: [] (undefined değil) → VTT Nuvio'da görünür
-//   ✓ CDN headers: Referer + Origin eklendi → source error düzeltildi
-//   ✓ Rapidrame: patron'un decodeDcHello (8 strateji) + resolveVideoFromScript
 // ============================================================
 
 var TMDB_API_KEY   = '500330721680edb6d5f7f12ba7cd9023';
@@ -23,11 +14,9 @@ var CDN_HOSTS = [
   'https://srv12.cdnimages784.shop',
   'https://srv12.cdnimages965.shop',
   'https://srv12.cdnimages403.shop',
-  'https://srv1.cdnimages391.shop',
-  'https://srv2.cdnimages391.shop',
-  'https://srv3.cdnimages391.shop',
-  'https://cdn1.cdnimages1128.shop',
-  'https://srv10.cdnimages1128.shop'
+  'https://srv12.cdnimages391.shop',
+  'https://srv12.cdnimages391.shop',
+  'https://srv12.cdnimages391.shop',
 ];
 
 var FALLBACK_DOMAINS = [
@@ -725,18 +714,13 @@ function fetchStreamsFromPage(domain, pageUrl) {
       return html;
     })
     .catch(function(e) {
-      // Fallback: authority header ile direkt GET
-      console.log('[HDFC] Router hata: ' + e.message + ' → authority GET');
-      var fbHdrs = Object.assign({}, SEARCH_HEADERS, {
-        'Accept':  'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Referer': domain + '/'
-      });
-      return fetch(pageUrl, { headers: fbHdrs })
-        .then(function(r) {
-          console.log('[HDFC] Fallback GET: HTTP ' + r.status);
-          return r.ok ? r.text() : '';
-        })
-        .catch(function() { return ''; });
+      // Fallback: direkt GET
+      console.log('[HDFC] Router hata: ' + e.message + ' → direkt GET');
+      return fetch(pageUrl, {
+        headers: Object.assign({}, PAGE_HEADERS, { 'Referer': domain + '/' })
+      })
+      .then(function(r) { return r.ok ? r.text() : ''; })
+      .catch(function() { return ''; });
     })
     .then(function(html) {
       if (!html) { console.log('[HDFC] Sayfa boş'); return []; }
