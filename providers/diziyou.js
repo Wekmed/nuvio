@@ -1,5 +1,7 @@
 /**
  * DiziYou Provider for Nuvio
+ *
+ * 
  */
 
 // ─── Sabitler ─────────────────────────────────────────────────────────────────
@@ -216,87 +218,181 @@ function resolveEpisodeUrl(baseUrl, info, season, episode) {
   });
 }
 
-// ─── Stream oluşturucu ────────────────────────────────────────────────────────
+
+// ─── M3U8 Altyazı Injection ──────────────────────────────────────────────────
 
 /**
- * Altyazı URL kuralı:
- *   Türkçe altyazılı (EN ses):  player/{id}.html    → subtitles/{id}/tr.vtt + en.vtt
- *   Türkçe dublaj       (TR ses): player/{id}_tr.html → subtitles/{id}_tr/tr.vtt
- *   İngilizce altyazılı (EN ses): player/{id}.html    → subtitles/{id}/en.vtt (default)
+ * Strateji: M3U8 master playlist fetch edip #EXT-X-MEDIA TYPE=SUBTITLES
+ * satırları ve her #EXT-X-STREAM-INF'e SUBTITLES="subs" eklenir.
+ * Sonuç base64 data URI olarak döner — Nuvio harici URL'ye ihtiyaç duymadan
+ * doğrudan oynatır, HLS player altyazıları otomatik görür.
  *
- * Stream URL kuralı:
- *   Türkçe altyazılı + İngilizce: episodes/{id}/play.m3u8
- *   Türkçe dublaj:                 episodes/{id}_tr/play.m3u8
+ * subs: [{ name, lang, url, default }]
  */
+function injectSubtitlesIntoM3u8(m3u8Text, m3u8Url, subs) {
+  var base = m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
+  var lines = m3u8Text.split('\n');
+  var out = [];
+  var subsInjected = false;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) { out.push(''); continue; }
+
+    // İlk #EXT-X-STREAM-INF'den önce subtitle media tag'leri ekle
+    if (!subsInjected && line.startsWith('#EXT-X-STREAM-INF')) {
+      subs.forEach(function(s) {
+        var def = s['default'] ? 'YES' : 'NO';
+        out.push(
+          '#EXT-X-MEDIA:TYPE=SUBTITLES' +
+          ',GROUP-ID="subs"' +
+          ',NAME="' + s.name + '"' +
+          ',DEFAULT=' + def +
+          ',AUTOSELECT=' + def +
+          ',FORCED=NO' +
+          ',LANGUAGE="' + s.lang + '"' +
+          ',URI="' + s.url + '"'
+        );
+      });
+      subsInjected = true;
+    }
+
+    // #EXT-X-STREAM-INF'e SUBTITLES="subs" ekle
+    if (line.startsWith('#EXT-X-STREAM-INF')) {
+      if (line.indexOf('SUBTITLES=') === -1) {
+        line = line + ',SUBTITLES="subs"';
+      }
+      out.push(line);
+      continue;
+    }
+
+    // Segment satırlarını absolute URL'ye çevir
+    if (!line.startsWith('#')) {
+      if (!line.startsWith('http')) {
+        line = base + line;
+      }
+      out.push(line);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return out.join('\n');
+}
+
+function fetchAndInjectM3u8(m3u8Url, subs, referer) {
+  return fetch(m3u8Url, {
+    headers: {
+      'User-Agent': UA,
+      'Referer':    referer || BASE_URL + '/',
+      'Origin':     BASE_URL,
+    }
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('M3U8 ' + r.status);
+    return r.text();
+  })
+  .then(function(text) {
+    var injected = injectSubtitlesIntoM3u8(text, m3u8Url, subs);
+    // btoa ile base64 — Hermes'te btoa mevcut
+    var b64 = btoa(unescape(encodeURIComponent(injected)));
+    return 'data:application/vnd.apple.mpegurl;base64,' + b64;
+  });
+}
+
+// ─── Stream oluşturucu ────────────────────────────────────────────────────────
+
 function buildSingleStream(playerId, isDub, episodeUrl) {
   var suffix    = isDub ? '_tr' : '';
   var playerUrl = BASE_URL + '/player/' + playerId + suffix + '.html';
   var epBase    = STORAGE_URL + '/episodes/' + playerId + suffix;
-  // Altyazı base: dublajda {id}_tr/, altyazılıda {id}/
   var subBase   = STORAGE_URL + '/subtitles/' + playerId + suffix;
-  // Orijinal (şifresiz) altyazı base her zaman {id}/ altında
   var subOrig   = STORAGE_URL + '/subtitles/' + playerId;
 
   return get(playerUrl, episodeUrl)
     .then(function(ph) {
       var srcM = ph.match(/id=["']diziyouSource["'][^>]*src=["']([^"']+)["']/i)
               || ph.match(/src=["']([^"']+\.m3u8[^"']*)["'][^>]*type=["']application\/x-mpegURL["']/i);
-      var m3u8 = srcM ? srcM[1] : (epBase + '/play.m3u8');
+      var m3u8Url = srcM ? srcM[1] : (epBase + '/play.m3u8');
 
       var trM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']tr["']/i)
              || ph.match(/<track[^>]+srclang=["']tr["'][^>]*src=["']([^"']+)["']/i);
       var enM = ph.match(/<track[^>]+src=["']([^"']+)["'][^>]*srclang=["']en["']/i)
              || ph.match(/<track[^>]+srclang=["']en["'][^>]*src=["']([^"']+)["']/i);
 
-      // Dublajda: tr.vtt → {id}_tr/tr.vtt, ingilizce altyazı yok
-      // Altyazılıda: tr.vtt + en.vtt → {id}/tr.vtt, {id}/en.vtt
       var trVtt = trM ? trM[1] : (subBase + '/tr.vtt');
       var enVtt = enM ? enM[1] : (subOrig + '/en.vtt');
 
-      var subtitles = isDub
-        ? [{ language: 'tr', url: trVtt, label: 'Türkçe', type: 'vtt' }]
+      var subs = isDub
+        ? [{ name: 'Turkce', lang: 'tr', url: trVtt, 'default': true }]
         : [
-            { language: 'tr', url: trVtt, label: 'Türkçe', type: 'vtt' },
-            { language: 'en', url: enVtt, label: 'English', type: 'vtt' },
+            { name: 'Turkce',  lang: 'tr', url: trVtt, 'default': true  },
+            { name: 'English', lang: 'en', url: enVtt, 'default': false },
           ];
 
-      return {
-        name:      'DiziYou',
-        title:     isDub ? 'DiziYou — Türkçe Dublaj' : 'DiziYou — Türkçe Altyazılı',
-        url:       m3u8,
-        quality:   '1080p',
-        headers:   { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
-        subtitles: subtitles,
-      };
+      return fetchAndInjectM3u8(m3u8Url, subs, episodeUrl)
+        .then(function(dataUri) {
+          console.log('[DiziYou] M3U8 inject OK player_id=' + playerId);
+          return {
+            name:    'DiziYou',
+            title:   isDub ? 'DiziYou - Turkce Dublaj' : 'DiziYou - Turkce Altyazili',
+            url:     dataUri,
+            quality: '1080p',
+            headers: { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
+          };
+        })
+        .catch(function() {
+          console.warn('[DiziYou] inject basarisiz, ham URL kullaniliyor');
+          return {
+            name:    'DiziYou',
+            title:   isDub ? 'DiziYou - Turkce Dublaj' : 'DiziYou - Turkce Altyazili',
+            url:     m3u8Url,
+            quality: '1080p',
+            headers: { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
+          };
+        });
     })
     .catch(function() {
-      // Player HTML alınamazsa doğrudan URL kullan
-      var subtitles = isDub
-        ? [{ language: 'tr', url: subBase + '/tr.vtt', label: 'Türkçe', type: 'vtt' }]
+      var m3u8Url = epBase + '/play.m3u8';
+      var subs = isDub
+        ? [{ name: 'Turkce',  lang: 'tr', url: subBase + '/tr.vtt', 'default': true  }]
         : [
-            { language: 'tr', url: subOrig + '/tr.vtt', label: 'Türkçe', type: 'vtt' },
-            { language: 'en', url: subOrig + '/en.vtt', label: 'English', type: 'vtt' },
+            { name: 'Turkce',  lang: 'tr', url: subOrig + '/tr.vtt', 'default': true  },
+            { name: 'English', lang: 'en', url: subOrig + '/en.vtt', 'default': false },
           ];
-      return {
-        name:      'DiziYou',
-        title:     isDub ? 'DiziYou — Türkçe Dublaj' : 'DiziYou — Türkçe Altyazılı',
-        url:       epBase + '/play.m3u8',
-        quality:   '1080p',
-        headers:   { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
-        subtitles: subtitles,
-      };
+      return fetchAndInjectM3u8(m3u8Url, subs, episodeUrl)
+        .then(function(dataUri) {
+          return {
+            name:    'DiziYou',
+            title:   isDub ? 'DiziYou - Turkce Dublaj' : 'DiziYou - Turkce Altyazili',
+            url:     dataUri,
+            quality: '1080p',
+            headers: { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
+          };
+        })
+        .catch(function() {
+          return {
+            name:    'DiziYou',
+            title:   isDub ? 'DiziYou - Turkce Dublaj' : 'DiziYou - Turkce Altyazili',
+            url:     m3u8Url,
+            quality: '1080p',
+            headers: { 'Referer': BASE_URL + '/', 'Origin': BASE_URL, 'User-Agent': UA },
+          };
+        });
     });
 }
 
 function buildStreams(playerId, episodeUrl) {
-  console.log('[DiziYou] ✅ player_id=' + playerId);
-  // Her iki versiyonu paralel çek
+  console.log('[DiziYou] player_id=' + playerId);
   return Promise.all([
-    buildSingleStream(playerId, false, episodeUrl), // Türkçe Altyazılı (EN ses)
-    buildSingleStream(playerId, true,  episodeUrl), // Türkçe Dublaj    (TR ses)
+    buildSingleStream(playerId, false, episodeUrl),
+    buildSingleStream(playerId, true,  episodeUrl),
   ]).then(function(results) {
     return results.filter(Boolean);
   });
+}
+
 }
 
 // ─── Ana fonksiyon ────────────────────────────────────────────────────────────
