@@ -1,21 +1,59 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v30.1
- * async/await YOK — saf ES5 Promise zinciri
- * Eşleştirme: token tabanlı, yanlış film sorunu çözüldü.
+ * FullHDFilmizlesene Provider for Nuvio
  */
 
-var cheerio = require("cheerio-without-node-native");
+var cheerio = require('cheerio-without-node-native');
 
-var BASE_URL = "https://www.fullhdfilmizlesene.live";
-var API_BASE  = "https://www.fullhdfilmizlesene.live/player/api.php";
+// ─── Sabitler ─────────────────────────────────────────────────────────────────
 
-var WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Origin':  BASE_URL
-};
+var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
+var FALLBACK_URL    = 'https://www.fullhdfilmizlesene.live';
+var TMDB_KEY        = '4ef0d7355d9ffb5151e987764708ce96';
+var CACHE_MS        = 60 * 60 * 1000; // 1 saat
 
-// ── Normalize ────────────────────────────────────────────────
+var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// ─── Domain cache ─────────────────────────────────────────────────────────────
+
+var _domain   = null;
+var _domainTs = 0;
+
+function getBaseUrl() {
+    var now = Date.now();
+    if (_domain && (now - _domainTs) < CACHE_MS) return Promise.resolve(_domain);
+
+    return fetch(DOMAIN_LIST_URL, { headers: { 'User-Agent': UA } })
+        .then(function(r) { return r.ok ? r.text() : ''; })
+        .then(function(text) {
+            var lines = text.split('\n');
+            for (var i = 0; i < lines.length; i++) {
+                var l = lines[i].trim();
+                // Satır formatı: fullhdfilmizlesene=https://www.site.live
+                if (l.toLowerCase().indexOf('fullhdfilmizlesene=') === 0) {
+                    var d = l.substring(19).trim().replace(/\/$/, '');
+                    if (d) { _domain = d; _domainTs = Date.now(); return d; }
+                }
+            }
+            _domain = FALLBACK_URL; _domainTs = Date.now();
+            return FALLBACK_URL;
+        })
+        .catch(function() { return _domain || FALLBACK_URL; });
+}
+
+// ─── Headers ──────────────────────────────────────────────────────────────────
+
+function makeHeaders(baseUrl, referer) {
+    return {
+        'User-Agent': UA,
+        'Referer':    referer || (baseUrl + '/'),
+        'Origin':     baseUrl,
+        'Accept':     'text/html,application/xhtml+xml,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8'
+    };
+}
+
+// ─── Normalize + eşleştirme ───────────────────────────────────────────────────
+
 function normalize(str) {
     if (!str) return '';
     return str.toLowerCase()
@@ -26,7 +64,6 @@ function normalize(str) {
         .trim();
 }
 
-// ── Token tabanlı eşleştirme skoru ──────────────────────────
 function matchScore(siteTitle, candidateTitles) {
     var normSite   = normalize(siteTitle);
     var siteTokens = normSite.split(' ');
@@ -36,10 +73,8 @@ function matchScore(siteTitle, candidateTitles) {
         var normCand   = normalize(candidateTitles[i]);
         var candTokens = normCand.split(' ');
 
-        // Birebir tam eşleşme
         if (normSite === normCand) return 1000;
 
-        // Token sayısı eşit + tüm tokenlar eşleşiyor
         if (siteTokens.length === candTokens.length) {
             var allMatch = true;
             for (var j = 0; j < siteTokens.length; j++) {
@@ -48,14 +83,13 @@ function matchScore(siteTitle, candidateTitles) {
             if (allMatch) { best = Math.max(best, 900); continue; }
         }
 
-        // Ortak token oranı
         var common = 0;
         for (var k = 0; k < siteTokens.length; k++) {
             if (candTokens.indexOf(siteTokens[k]) !== -1) common++;
         }
         var ratio = common / Math.max(siteTokens.length, candTokens.length);
 
-        // Token sayısı FARKLI → maks 200 puan (Cars ≠ Cars 3 koruması)
+        // Token sayısı farklı → Cars ≠ Cars 3 koruması
         if (siteTokens.length !== candTokens.length) {
             best = Math.max(best, Math.round(ratio * 200));
         } else if (ratio > 0.8) {
@@ -65,12 +99,14 @@ function matchScore(siteTitle, candidateTitles) {
     return best;
 }
 
-// ── Base64 / RapidVid decode ─────────────────────────────────
+// ─── Base64 / RapidVid çözücü ─────────────────────────────────────────────────
+
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
         var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-        var out = ''; str = String(str).replace(/[=]+$/, '');
+        var out = '';
+        str = String(str).replace(/[=]+$/, '');
         for (var bc = 0, bs, buffer, idx = 0;
              buffer = str.charAt(idx++);
              ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4)
@@ -78,36 +114,41 @@ function universalAtob(str) {
             buffer = chars.indexOf(buffer);
         }
         return out;
-    } catch (e) { return null; }
+    } catch(e) { return null; }
 }
 
 function decodeRapidVid(encodedData) {
     try {
         if (!encodedData) return null;
-        var reversed     = encodedData.split('').reverse().join('');
-        var decodedBin   = universalAtob(reversed.replace(/[^A-Za-z0-9+/=]/g, ''));
-        var key          = 'K9L';
-        var adjusted     = '';
+        var reversed   = encodedData.split('').reverse().join('');
+        var decodedBin = universalAtob(reversed.replace(/[^A-Za-z0-9+/=]/g, ''));
+        if (!decodedBin) return null;
+        var key      = 'K9L';
+        var adjusted = '';
         for (var i = 0; i < decodedBin.length; i++) {
             var shift = (key.charCodeAt(i % key.length) % 5) + 1;
             adjusted += String.fromCharCode(decodedBin.charCodeAt(i) - shift);
         }
         var finalUrl = universalAtob(adjusted);
         return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, '').trim() : null;
-    } catch (e) { return null; }
+    } catch(e) { return null; }
 }
 
-// ── Atom stream ──────────────────────────────────────────────
-function fetchAtom(vidid, movieTitle) {
-    return fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS })
+// ─── Stream sağlayıcıları ─────────────────────────────────────────────────────
+
+function fetchAtom(apiBase, vidid, movieTitle, baseUrl) {
+    var url = apiBase + '?id=' + vidid + '&type=t&name=atom&get=video&format=json';
+    var hdrs = makeHeaders(baseUrl);
+
+    return fetch(url, { headers: hdrs })
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (!data || !data.html) return null;
             var playerUrl = data.html.replace(/\\/g, '');
-            return fetch(playerUrl, { headers: WORKING_HEADERS })
+            return fetch(playerUrl, { headers: hdrs })
                 .then(function(r2) { return r2.text(); })
                 .then(function(html) {
-                    var m = html.match(/av\(['"]([^'"]+)['"]\)/);
+                    var m = html.match(/av\(['"]([ ^'"]+)['"]\)/);
                     if (!m) return null;
                     var url = decodeRapidVid(m[1]);
                     if (!url) return null;
@@ -116,54 +157,92 @@ function fetchAtom(vidid, movieTitle) {
                         title:   '⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj',
                         url:     url,
                         quality: 'Auto',
-                        headers: WORKING_HEADERS
+                        headers: makeHeaders(baseUrl, playerUrl)
                     };
                 });
         })
-        .catch(function() { return null; });
-}
-
-// ── Turbo stream ─────────────────────────────────────────────
-function fetchTurbo(vidid, movieTitle) {
-    return fetch(API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json', { headers: WORKING_HEADERS })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (!data || !data.html || data.html.indexOf('/watch/') === -1) return null;
-            var watchIdMatch = data.html.match(/\/watch\/(.*?)"/);
-            if (!watchIdMatch) return null;
-            var watchId  = watchIdMatch[1];
-            var playUrl  = 'https://turbo.imgz.me/play/' + watchId + '?autoplay=true';
-            var playHdrs = Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL });
-            return fetch(playUrl, { headers: playHdrs })
-                .then(function(r2) { return r2.text(); })
-                .then(function(html) {
-                    var m = html.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-                    if (!m) return null;
-                    return {
-                        name:    movieTitle,
-                        title:   '⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj',
-                        url:     m[1],
-                        quality: 'Auto',
-                        headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' })
-                    };
-                });
-        })
-        .catch(function() { return null; });
-}
-
-function getStreamsFromAPI(vidid, movieTitle) {
-    return Promise.all([fetchAtom(vidid, movieTitle), fetchTurbo(vidid, movieTitle)])
-        .then(function(results) {
-            return results.filter(function(r) { return r !== null; });
+        .catch(function(e) {
+            console.error('[FULLHDFILM] Atom hatası: ' + e.message);
+            return null;
         });
 }
 
-// ── Arama + güvenli eşleştirme ───────────────────────────────
-function searchAndMatch(query, allTitles, targetYear) {
-    var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-    console.error('[FULLHDFILM] Aranıyor: ' + searchUrl + ' | Hedef yıl: ' + targetYear);
+function fetchTurbo(apiBase, vidid, movieTitle, baseUrl) {
+    var url  = apiBase + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json';
+    var hdrs = makeHeaders(baseUrl);
 
-    return fetch(searchUrl, { headers: WORKING_HEADERS })
+    return fetch(url, { headers: hdrs })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data || !data.html || data.html.indexOf('/watch/') === -1) return null;
+            var m = data.html.match(/\/watch\/(.*?)"/);
+            if (!m) return null;
+            var watchId = m[1];
+            var playUrl = 'https://turbo.imgz.me/play/' + watchId + '?autoplay=true';
+            return fetch(playUrl, { headers: makeHeaders(baseUrl, baseUrl + '/') })
+                .then(function(r2) { return r2.text(); })
+                .then(function(html) {
+                    var fm = html.match(/file:\s*"(.*?\.m3u8.*?)"/i);
+                    if (!fm) return null;
+                    return {
+                        name:    movieTitle,
+                        title:   '⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj',
+                        url:     fm[1],
+                        quality: 'Auto',
+                        headers: makeHeaders('https://turbo.imgz.me', playUrl)
+                    };
+                });
+        })
+        .catch(function(e) {
+            console.error('[FULLHDFILM] Turbo hatası: ' + e.message);
+            return null;
+        });
+}
+
+function getStreamsFromVidid(vidid, movieTitle, baseUrl) {
+    var apiBase = baseUrl + '/player/api.php';
+    return Promise.all([
+        fetchAtom(apiBase, vidid, movieTitle, baseUrl),
+        fetchTurbo(apiBase, vidid, movieTitle, baseUrl)
+    ]).then(function(results) {
+        return results.filter(function(r) { return r !== null; });
+    });
+}
+
+// ─── Film sayfası → vidid ─────────────────────────────────────────────────────
+
+function fetchFilmStreams(filmUrl, movieTitle, baseUrl) {
+    var fullUrl = filmUrl.startsWith('http') ? filmUrl : baseUrl + filmUrl;
+    console.error('[FULLHDFILM] Film sayfası: ' + fullUrl);
+
+    return fetch(fullUrl, { headers: makeHeaders(baseUrl) })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var m = html.match(/vidid\s*=\s*['"](\\d+)['"]/);
+            if (!m) {
+                // Alternatif pattern
+                m = html.match(/data-id=['"](\\d+)['"]/);
+            }
+            if (!m) {
+                console.error('[FULLHDFILM] vidid bulunamadı.');
+                return [];
+            }
+            console.error('[FULLHDFILM] vidid: ' + m[1]);
+            return getStreamsFromVidid(m[1], movieTitle, baseUrl);
+        })
+        .catch(function(e) {
+            console.error('[FULLHDFILM] Film sayfası hatası: ' + e.message);
+            return [];
+        });
+}
+
+// ─── Arama + eşleştirme ───────────────────────────────────────────────────────
+
+function searchAndMatch(query, allTitles, targetYear, baseUrl) {
+    var searchUrl = baseUrl + '/arama/' + encodeURIComponent(query);
+    console.error('[FULLHDFILM] Aranıyor: ' + searchUrl + ' | Hedef yıl: ' + (targetYear || 'yılsız'));
+
+    return fetch(searchUrl, { headers: makeHeaders(baseUrl) })
         .then(function(r) { return r.text(); })
         .then(function(html) {
             var $ = cheerio.load(html);
@@ -176,7 +255,6 @@ function searchAndMatch(query, allTitles, targetYear) {
 
                 if (!link || !siteTitle) return;
 
-                // Yıl kesin eşleşmeli (yılsız fallback geçişinde targetYear='')
                 if (targetYear && siteYear !== targetYear) {
                     console.error('[FULLHDFILM] Yıl uyuşmadı → ' + siteTitle + ' (' + siteYear + ')');
                     return;
@@ -190,7 +268,10 @@ function searchAndMatch(query, allTitles, targetYear) {
                 }
             });
 
-            if (candidates.length === 0) return null;
+            if (candidates.length === 0) {
+                console.error('[FULLHDFILM] Uygun aday bulunamadı.');
+                return null;
+            }
 
             candidates.sort(function(a, b) { return b.score - a.score; });
             var best = candidates[0];
@@ -203,32 +284,37 @@ function searchAndMatch(query, allTitles, targetYear) {
         });
 }
 
-// ── Film sayfasından stream al ────────────────────────────────
-function fetchFilmStreams(filmUrl, movieTitle) {
-    var fullUrl = filmUrl.startsWith('http') ? filmUrl : BASE_URL + filmUrl;
-    return fetch(fullUrl, { headers: WORKING_HEADERS })
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            var m = html.match(/vidid\s*=\s*['"](\d+)['"]/);
-            if (!m) {
-                console.error('[FULLHDFILM] vidid bulunamadı.');
-                return [];
-            }
-            return getStreamsFromAPI(m[1], movieTitle);
-        });
+// ─── Fallback zinciri ─────────────────────────────────────────────────────────
+
+function runFallbackChain(steps, movieTitle, baseUrl) {
+    function next(i) {
+        if (i >= steps.length) {
+            console.error('[FULLHDFILM] Tüm denemeler başarısız.');
+            return Promise.resolve([]);
+        }
+        var s = steps[i];
+        console.error('[FULLHDFILM] Deneme ' + (i + 1) + '/' + steps.length + ': "' + s.query + '" (yıl: ' + (s.year || 'yok') + ')');
+        return searchAndMatch(s.query, s.allTitles, s.year, baseUrl)
+            .then(function(filmUrl) {
+                if (filmUrl) return fetchFilmStreams(filmUrl, movieTitle, baseUrl);
+                return next(i + 1);
+            });
+    }
+    return next(0);
 }
 
-// ── Ana zincir ────────────────────────────────────────────────
-function getStreams(tmdbId, mediaType) {
-    if (mediaType !== 'movie') return Promise.resolve([]);
+// ─── TMDB bilgisi ─────────────────────────────────────────────────────────────
 
-    return fetch('https://api.themoviedb.org/3/movie/' + tmdbId
-            + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=alternative_titles')
+function fetchTmdbData(tmdbId) {
+    var url = 'https://api.themoviedb.org/3/movie/' + tmdbId
+        + '?language=tr-TR&api_key=' + TMDB_KEY + '&append_to_response=alternative_titles';
+
+    return fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var targetYear = data.release_date ? data.release_date.split('-')[0] : '';
-            var titleTr    = data.title || '';
-            var titleEn    = data.original_title || '';
+            var titleTr  = data.title || '';
+            var titleEn  = data.original_title || '';
+            var year     = data.release_date ? data.release_date.split('-')[0] : '';
 
             var allTitles = [titleTr, titleEn];
             if (data.alternative_titles && data.alternative_titles.titles) {
@@ -236,45 +322,60 @@ function getStreams(tmdbId, mediaType) {
                     if (t.title) allTitles.push(t.title);
                 });
             }
+            // Tekrarları temizle
             allTitles = allTitles.filter(function(t, idx, arr) {
                 return t && arr.indexOf(t) === idx;
             });
 
-            console.error('[FULLHDFILM] === Başlıyor: ' + titleTr + ' / ' + titleEn + ' (' + targetYear + ') ===');
+            return { titleTr: titleTr, titleEn: titleEn, year: year, allTitles: allTitles };
+        });
+}
 
-            var movieTitle = titleTr || titleEn;
+// ─── Ana fonksiyon ────────────────────────────────────────────────────────────
 
-            // 1. TR başlıkla ara
-            return searchAndMatch(titleTr || titleEn, allTitles, targetYear)
-                .then(function(filmUrl) {
-                    if (filmUrl) return fetchFilmStreams(filmUrl, movieTitle);
+function getStreams(tmdbId, mediaType) {
+    if (mediaType !== 'movie') {
+        console.error('[FULLHDFILM] Sadece film destekleniyor.');
+        return Promise.resolve([]);
+    }
 
-                    // 2. EN başlıkla dene
+    console.error('[FULLHDFILM] === Başlatılıyor: tmdbId=' + tmdbId + ' ===');
+
+    return getBaseUrl()
+        .then(function(baseUrl) {
+            console.error('[FULLHDFILM] Domain: ' + baseUrl);
+
+            return fetchTmdbData(tmdbId)
+                .then(function(tmdb) {
+                    var titleTr   = tmdb.titleTr;
+                    var titleEn   = tmdb.titleEn;
+                    var year      = tmdb.year;
+                    var allTitles = tmdb.allTitles;
+                    var movieTitle = titleTr || titleEn;
+
+                    console.error('[FULLHDFILM] Film: "' + titleTr + '" / "' + titleEn + '" (' + year + ')');
+
+                    // Fallback sırası:
+                    // 1. TR başlık + yıl
+                    // 2. EN başlık + yıl
+                    // 3. TR başlık yılsız
+                    // 4. EN başlık yılsız
+                    var steps = [];
+
+                    if (titleTr) {
+                        steps.push({ query: titleTr, allTitles: allTitles, year: year });
+                    }
                     if (titleEn && titleEn !== titleTr) {
-                        console.error('[FULLHDFILM] TR ile bulunamadı, EN deneniyor...');
-                        return searchAndMatch(titleEn, allTitles, targetYear)
-                            .then(function(url2) {
-                                if (url2) return fetchFilmStreams(url2, movieTitle);
-
-                                // 3. Yılsız fallback
-                                console.error('[FULLHDFILM] Yılsız fallback deneniyor...');
-                                return searchAndMatch(titleTr || titleEn, allTitles, '')
-                                    .then(function(url3) {
-                                        if (url3) return fetchFilmStreams(url3, movieTitle);
-                                        console.error('[FULLHDFILM] Film bulunamadı.');
-                                        return [];
-                                    });
-                            });
+                        steps.push({ query: titleEn, allTitles: allTitles, year: year });
+                    }
+                    if (titleTr) {
+                        steps.push({ query: titleTr, allTitles: allTitles, year: '' });
+                    }
+                    if (titleEn && titleEn !== titleTr) {
+                        steps.push({ query: titleEn, allTitles: allTitles, year: '' });
                     }
 
-                    // 3. Yılsız fallback (EN yoksa)
-                    console.error('[FULLHDFILM] Yılsız fallback deneniyor...');
-                    return searchAndMatch(titleTr, allTitles, '')
-                        .then(function(url3) {
-                            if (url3) return fetchFilmStreams(url3, movieTitle);
-                            console.error('[FULLHDFILM] Film bulunamadı.');
-                            return [];
-                        });
+                    return runFallbackChain(steps, movieTitle, baseUrl);
                 });
         })
         .catch(function(e) {
@@ -283,9 +384,10 @@ function getStreams(tmdbId, mediaType) {
         });
 }
 
+// ─── Export ───────────────────────────────────────────────────────────────────
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
     globalThis.getStreams = getStreams;
-                                         }
-              
+}
