@@ -1,5 +1,7 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
+ * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
+ * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -287,7 +289,17 @@ function getStreamsFromVidid(vidid, movieTitle, baseUrl) {
         fetchAtom(apiBase, vidid, movieTitle, baseUrl),
         fetchTurbo(apiBase, vidid, movieTitle, baseUrl)
     ]).then(function(results) {
-        return results.filter(function(r) { return r !== null; });
+        // fetchAtom array döndürüyor, fetchTurbo tek obje — ikisini düzleştir
+        var flat = [];
+        results.forEach(function(r) {
+            if (!r) return;
+            if (Array.isArray(r)) {
+                r.forEach(function(s) { if (s) flat.push(s); });
+            } else {
+                flat.push(r);
+            }
+        });
+        return flat;
     });
 }
 
