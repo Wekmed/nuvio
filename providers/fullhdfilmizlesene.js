@@ -7,7 +7,7 @@ var cheerio = require('cheerio-without-node-native');
 // ─── Sabitler ─────────────────────────────────────────────────────────────────
 
 var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
-var FALLBACK_URL    = 'https://www.fullhdfilmizlesene.live';
+var FALLBACK_URL    = 'https://www.fullhdfilmizlesene.life';
 var TMDB_KEY        = '4ef0d7355d9ffb5151e987764708ce96';
 var CACHE_MS        = 60 * 60 * 1000; // 1 saat
 
@@ -29,7 +29,7 @@ function getBaseUrl() {
             for (var i = 0; i < lines.length; i++) {
                 var l = lines[i].trim();
                 // Satır formatı: fullhdfilmizlesene=https://www.site.live
-                if (l.toLowerCase().indexOf('fullhdfilmizlesene=') === 0) {
+                if (l.toLowerCase().indexOf('|FullHDFilmizlesene:') === 0) {
                     var d = l.substring(19).trim().replace(/\/$/, '');
                     if (d) { _domain = d; _domainTs = Date.now(); return d; }
                 }
