@@ -144,6 +144,22 @@
       "limited": false,
       "disabledPlatforms": []
     },
+      "id": "cizgivedizi",
+      "name": "CizgiveDizi",
+      "description": "Türkçe çizgi film ve animasyon dizileri. cizgivedizi.com üzerinden 1000+ içerikle full HD stream sağlar.",
+      "version": "1.0.0",
+      "author": "nuvio: Wekmed",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/cizgivedizi.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
     {
       "id": "sinewix",
       "name": "SineWix",
