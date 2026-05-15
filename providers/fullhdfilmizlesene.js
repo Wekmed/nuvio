@@ -1,7 +1,5 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
- * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
- * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -66,34 +64,66 @@ function normalize(str) {
         .trim();
 }
 
+// Site genellikle "The Matrix 1" gibi sayı suffix ekler — onu soy, sonra karşılaştır.
+function stripNumberSuffix(tokens) {
+    if (tokens.length > 1 && /^\d+$/.test(tokens[tokens.length - 1])) {
+        return tokens.slice(0, tokens.length - 1);
+    }
+    return tokens;
+}
+
 function matchScore(siteTitle, candidateTitles) {
-    var normSite   = normalize(siteTitle);
-    var siteTokens = normSite.split(' ');
+    var normSite        = normalize(siteTitle);
+    var siteTokens      = normSite.split(' ');
+    var siteClean       = stripNumberSuffix(siteTokens); // "the matrix 1" → ["the","matrix"]
     var best = 0;
 
     for (var i = 0; i < candidateTitles.length; i++) {
         var normCand   = normalize(candidateTitles[i]);
         var candTokens = normCand.split(' ');
 
+        // Birebir tam eşleşme
         if (normSite === normCand) return 1000;
 
+        // "The Matrix 1" (site) ↔ "The Matrix" (TMDB): suffix soyulunca tam eşleşme
+        if (siteClean.length === candTokens.length) {
+            var cleanOk = true;
+            for (var j = 0; j < siteClean.length; j++) {
+                if (siteClean[j] !== candTokens[j]) { cleanOk = false; break; }
+            }
+            if (cleanOk) { best = Math.max(best, 950); continue; }
+        }
+
+        // Token sayısı eşit + tüm tokenlar eşleşiyor
         if (siteTokens.length === candTokens.length) {
             var allMatch = true;
-            for (var j = 0; j < siteTokens.length; j++) {
-                if (siteTokens[j] !== candTokens[j]) { allMatch = false; break; }
+            for (var k = 0; k < siteTokens.length; k++) {
+                if (siteTokens[k] !== candTokens[k]) { allMatch = false; break; }
             }
             if (allMatch) { best = Math.max(best, 900); continue; }
         }
 
-        var common = 0;
-        for (var k = 0; k < siteTokens.length; k++) {
-            if (candTokens.indexOf(siteTokens[k]) !== -1) common++;
+        // Ortak token oranı — her iki yönde hesapla
+        var cSC = 0;
+        for (var m = 0; m < siteTokens.length; m++) {
+            if (candTokens.indexOf(siteTokens[m]) !== -1) cSC++;
         }
-        var ratio = common / Math.max(siteTokens.length, candTokens.length);
+        var cCS = 0;
+        for (var n = 0; n < candTokens.length; n++) {
+            if (siteTokens.indexOf(candTokens[n]) !== -1) cCS++;
+        }
+        var ratio = Math.max(cSC, cCS) / Math.max(siteTokens.length, candTokens.length);
 
-        // Token sayısı farklı → Cars ≠ Cars 3 koruması
         if (siteTokens.length !== candTokens.length) {
-            best = Math.max(best, Math.round(ratio * 200));
+            // Suffix soyulduktan sonra aday tamamen kapsamıyor mu?
+            var cleanRatio = siteClean.length > 0
+                ? cSC / Math.max(siteClean.length, candTokens.length)
+                : 0;
+            if (cleanRatio >= 1.0) {
+                best = Math.max(best, 800); // suffix sonrası tam kapsama
+            } else {
+                best = Math.max(best, Math.round(ratio * 200)); // Cars ≠ Cars 3 koruması
+            }
         } else if (ratio > 0.8) {
             best = Math.max(best, Math.round(ratio * 500));
         }
@@ -150,7 +180,7 @@ function fetchAtom(apiBase, vidid, movieTitle, baseUrl) {
             return fetch(playerUrl, { headers: hdrs })
                 .then(function(r2) { return r2.text(); })
                 .then(function(html) {
-                    var m = html.match(/av\(['"]([ ^'"]+)['"]\)/);
+                    var m = html.match(/av\(['"]([^'"]+)['"]\)/);
                     if (!m) return null;
                     var url = decodeRapidVid(m[1]);
                     if (!url) return null;
@@ -220,10 +250,10 @@ function fetchFilmStreams(filmUrl, movieTitle, baseUrl) {
     return fetch(fullUrl, { headers: makeHeaders(baseUrl) })
         .then(function(r) { return r.text(); })
         .then(function(html) {
-            var m = html.match(/vidid\s*=\s*['"](\\d+)['"]/);
+            var m = html.match(/vidid\s*=\s*['"](\d+)['"]/);
             if (!m) {
                 // Alternatif pattern
-                m = html.match(/data-id=['"](\\d+)['"]/);
+                m = html.match(/data-id=['"](\d+)['"]/);
             }
             if (!m) {
                 console.error('[FULLHDFILM] vidid bulunamadı.');
@@ -241,7 +271,7 @@ function fetchFilmStreams(filmUrl, movieTitle, baseUrl) {
 // ─── Arama + eşleştirme ───────────────────────────────────────────────────────
 
 function searchAndMatch(query, allTitles, targetYear, baseUrl) {
-    var searchUrl = baseUrl + '/arama/' + encodeURIComponent(query);
+    var searchUrl = baseUrl + '/arama/' + query.replace(/\s+/g, '+');
     console.error('[FULLHDFILM] Aranıyor: ' + searchUrl + ' | Hedef yıl: ' + (targetYear || 'yılsız'));
 
     return fetch(searchUrl, { headers: makeHeaders(baseUrl) })
