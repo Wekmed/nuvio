@@ -1,7 +1,5 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
- * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
- * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
