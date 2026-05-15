@@ -1,7 +1,5 @@
 /**
  * FullHDFilmizlesene Provider for Nuvio
- * v2.0 — domain cache + güvenli fallback zinciri + RapidVid/Atom/Turbo stream
- * async/await YOK — saf ES5 Promise zinciri
  */
 
 var cheerio = require('cheerio-without-node-native');
@@ -186,54 +184,13 @@ function fetchAtom(apiBase, vidid, movieTitle, baseUrl) {
                     if (!m) return null;
                     var url = decodeRapidVid(m[1]);
                     if (!url) return null;
-                    // Master M3U8 relative path içeriyor — resolve et
-                    var cdnOrigin = url.match(/^(https?:\/\/[^\/]+)/);
-                    var cdnBase   = cdnOrigin ? cdnOrigin[1] : '';
-                    var streamHdrs = cdnBase
-                        ? { 'User-Agent': UA, 'Referer': cdnBase + '/', 'Origin': cdnBase }
-                        : { 'User-Agent': UA };
-
-                    return fetch(url, { headers: streamHdrs })
-                        .then(function(r3) { return r3.text(); })
-                        .then(function(m3u8) {
-                            var streams = [];
-                            var qualMap = { 'b2160': '4K', 'b1080': '1080p', 'b720': '720p', 'b480': '480p', 'b360': '360p' };
-                            var lines = m3u8.split('\n');
-                            for (var li = 0; li < lines.length; li++) {
-                                var line = lines[li].trim();
-                                if (!line || line.charAt(0) === '#') continue;
-                                // Relative path → absolute
-                                var absUrl = line.startsWith('http') ? line : (cdnBase + line);
-                                // Kalite belirle
-                                var qual = 'Auto';
-                                for (var k in qualMap) {
-                                    if (absUrl.indexOf(k) !== -1) { qual = qualMap[k]; break; }
-                                }
-                                streams.push({
-                                    name:    movieTitle,
-                                    title:   '⌜ FULLHDFILM ⌟ | ' + qual + ' | 🇹🇷 Dublaj',
-                                    url:     absUrl,
-                                    quality: qual,
-                                    headers: streamHdrs
-                                });
-                            }
-                            // Kaliteye göre sırala: 1080p önce
-                            var order = ['1080p','720p','4K','480p','360p','Auto'];
-                            streams.sort(function(a,b){
-                                return order.indexOf(a.quality) - order.indexOf(b.quality);
-                            });
-                            return streams.length ? streams : null;
-                        })
-                        .catch(function() {
-                            // M3U8 fetch başarısız → master URL'i direkt ver
-                            return [{
-                                name:    movieTitle,
-                                title:   '⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj',
-                                url:     url,
-                                quality: 'Auto',
-                                headers: streamHdrs
-                            }];
-                        });
+                    return {
+                        name:    movieTitle,
+                        title:   '⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj',
+                        url:     url,
+                        quality: 'Auto',
+                        headers: makeHeaders(baseUrl, playerUrl)
+                    };
                 });
         })
         .catch(function(e) {
