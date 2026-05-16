@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider
+ * CizgiVeDizi — Nuvio Providerv
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
