@@ -1,6 +1,20 @@
 {
   "name": "Erenxyz",
   "version": "1.0.5",
+  "settings": [
+    {
+      "key": "api_base",
+      "label": "API Base",
+      "description": "Trovala su torbox.app/settings",
+      "type": "text",
+      "required": true
+    },{
+      "key": "api_key",
+      "label": "API Key",
+      "description": "Trovala su torbox.app/settings",
+      "type": "password",
+      "required": false
+    }],
   "scrapers": [
     {
       "id": "filmmodu",
