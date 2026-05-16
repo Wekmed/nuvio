@@ -1,6 +1,14 @@
 // ============================================================
 //  HDFilmCehennemi — Nuvio Provider
-///
+//
+//  Close  : V5 akışı — thumbnail → CDN host listesi (paralel)
+//  Rapidrame: patron mantığı — /rplayer/{id}/ → resolveVideoFromScript → decodeDcHello
+//
+//  Düzeltmeler:
+//   ✓ authority: www.hdfilmcehennemi.pro → search JSON döner
+//   ✓ subtitles: [] (undefined değil) → VTT Nuvio'da görünür
+//   ✓ CDN headers: Referer + Origin eklendi → source error düzeltildi
+//   ✓ Rapidrame: patron'un decodeDcHello (8 strateji) + resolveVideoFromScript
 // ============================================================
 
 var TMDB_API_KEY   = '500330721680edb6d5f7f12ba7cd9023';
@@ -551,9 +559,10 @@ function resolveVideoFromScript(script) {
   return dm ? dm[1] : '';
 }
 function resolveRapidrameSource(rplayerUrl, sourceName, pageReferer) {
-  // rplayer URL'ini / olmadan da dene (patron akışı)
-  var rplayerUrlNoSlash = rplayerUrl.replace(/\/$/, '');
-  return fetch(rplayerUrlNoSlash, {
+  // rplayer URL'i sonda / ile olmalı (301 redirect önlemek için)
+  var rplayerUrlSlash = rplayerUrl.endsWith('/') ? rplayerUrl : rplayerUrl + '/';
+  return fetch(rplayerUrlSlash, {
+    redirect: 'follow',
     headers: {
       'User-Agent': ANDROID_UA,
       'Referer':    PRIMARY_DOMAIN + '/',
