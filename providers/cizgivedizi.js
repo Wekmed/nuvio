@@ -1,6 +1,7 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
- * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
+ * CizgiVeDizi — Nuvio Provider (v12)
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 var BASE_URL    = 'https://www.cizgivedizi.com';
@@ -8,7 +9,6 @@ var TMDB_KEY    = '500330721680edb6d5f7f12ba7cd9023';
 var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
 
-// Arama için sabit anchor (/_/ path 404 veriyor)
 var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
 var SEARCH_FILM = BASE_URL + '/film/_/_';
 
@@ -24,9 +24,7 @@ var STOP = ['the','a','an','of','in','on','at','to','and','or','for',
 
 // ── Log ──────────────────────────────────────────────────────
 
-function log(msg) {
-  console.log(LOG_TAG + ' ' + msg);
-}
+function log(msg) { console.log(LOG_TAG + ' ' + msg); }
 
 // ── Normalize ────────────────────────────────────────────────
 
@@ -48,16 +46,12 @@ function getHtml(url, extra) {
     });
 }
 
-// ── Base64 decode (Hermes uyumlu) ────────────────────────────
+// ── Base64 decode ────────────────────────────────────────────
 
 function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
   if (typeof Buffer !== 'undefined') {
-    try {
-      return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    } catch(e) {}
+    try { return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); } catch(e) {}
   }
-  // atob: RN 0.73+ ve tarayıcı
   if (typeof atob !== 'undefined') {
     try { return JSON.parse(atob(b64)); } catch(e) {}
   }
@@ -98,10 +92,6 @@ function fetchTmdbInfo(tmdbId, mediaType) {
 
 // ── 2. Arama ─────────────────────────────────────────────────
 
-/**
- * Sorgu listesi — en spesifik'ten en genel'e:
- * TR tam → EN tam → EN son kelime → EN ilk → TR son → TR ilk → 2-kelime combolar
- */
 function buildQueries(titleTr, titleEn) {
   var seen = {}, out = [];
   function add(q) {
@@ -117,12 +107,12 @@ function buildQueries(titleTr, titleEn) {
 
   add(titleTr);
   add(titleEn);
-  if (enW.length > 0) add(enW[enW.length - 1]);       // EN son kelime: "Gumball"
-  if (enW.length > 1) add(enW[0]);                     // EN ilk kelime
+  if (enW.length > 0) add(enW[enW.length - 1]);
+  if (enW.length > 1) add(enW[0]);
   if (enW.length > 2) add(enW[0] + ' ' + enW[1]);
-  if (trW.length > 0) add(trW[trW.length - 1]);        // TR son kelime
+  if (trW.length > 0) add(trW[trW.length - 1]);
   if (trW.length > 1) add(trW[0]);
-  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]); // "Muhteşem Tuhaf"
+  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]);
   for (var j = 1; j < enW.length - 1; j++) add(enW[j] + ' ' + enW[j+1]);
   return out;
 }
@@ -140,11 +130,6 @@ function searchSite(query, mediaType) {
     .catch(function() { return []; });
 }
 
-/**
- * Skorlama:
- * - name içinde yıl varsa (ducktales (2017)): TMDB yılı ile karşılaştır → net seçim
- * - Yıl yoksa: isim benzerliği (tam, kapsama, kısmi)
- */
 function scoreItem(item, titleEn, titleTr, year) {
   var raw = item.name || '';
   var n   = norm(raw);
@@ -160,24 +145,19 @@ function scoreItem(item, titleEn, titleTr, year) {
 
   var s = 0;
   if (nc === nec || nc === ntc)                         s = 80;
-  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
-  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
+  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80;
+  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75;
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
 
   if (s === 0) return 0;
-  if (ny && year) return ny === year ? s + 20 : 5; // yıl varsa kesin ayırt
+  if (ny && year) return ny === year ? s + 20 : 5;
   return s;
 }
 
-/**
- * Eşit skorlu (tie) adaylarda dizi sayfasından yıl çek.
- * badge-date-text span içindeki ilk yılı al.
- */
 function fetchYearFromPage(item, mediaType) {
   var type = mediaType === 'movie' ? 'film' : 'dizi';
   var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug);
-  // İlk 60KB'da badge-date-text bulunabilir
   return getHtml(url, { 'Range': 'bytes=0-61440' })
     .then(function(html) {
       var m = html.match(/badge-date-text[^>]*>[^<]*((?:19[89]|20[0-3])\d)/i);
@@ -194,12 +174,8 @@ function findContent(info, mediaType) {
     return chain.then(function(found) {
       if (found) return found;
       return searchSite(query, mediaType).then(function(results) {
-        if (!results.length) {
-          log('Sorgu "' + query + '" → 0 sonuç');
-          return null;
-        }
-        log('Sorgu "' + query + '" → ' + results.length + ' sonuç: [' +
-            results.map(function(r) { return r.id; }).join(', ') + ']');
+        if (!results.length) { log('Sorgu "' + query + '" → 0 sonuç'); return null; }
+        log('Sorgu "' + query + '" → ' + results.length + ' sonuç');
 
         var candidates = results
           .map(function(item) {
@@ -208,22 +184,17 @@ function findContent(info, mediaType) {
           .filter(function(c) { return c.score >= 70; })
           .sort(function(a, b) { return b.score - a.score; });
 
-        if (!candidates.length) {
-          log('Hiç aday kalmadı (min score 70)');
-          return null;
-        }
+        if (!candidates.length) { log('Hiç aday kalmadı (min score 70)'); return null; }
 
         log('Adaylar: ' + candidates.map(function(c) {
           return c.item.id + '(' + c.score + ')';
         }).join(', '));
 
-        // Net fark varsa direkt al
         if (candidates.length === 1 || candidates[0].score - candidates[1].score >= 10) {
           log('Seçildi: ' + candidates[0].item.id + ' score=' + candidates[0].score);
           return candidates[0].item;
         }
 
-        // Tie: yıl ile ayırt et
         log('Tie durumu — yıl fetch ediliyor');
         return Promise.all(
           candidates.slice(0, 3).map(function(c) {
@@ -233,11 +204,8 @@ function findContent(info, mediaType) {
             });
           })
         ).then(function(withYears) {
-          var exact = withYears.find(function(c) { return c.year === info.year; });
-          if (exact) {
-            log('Yıl eşleşti: ' + exact.item.id);
-            return exact.item;
-          }
+          var exact = withYears.filter(function(c) { return c.year === info.year; })[0];
+          if (exact) { log('Yıl eşleşti: ' + exact.item.id); return exact.item; }
           log('Yıl eşleşmedi, ilk aday: ' + withYears[0].item.id);
           return withYears[0].item;
         });
@@ -273,32 +241,39 @@ function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
 }
 
 // ── 4. HTML → embed URL'leri ─────────────────────────────────
+//
+// Sorun: window.__embeds_b64 cizgivedizi.com'da client-side JS tarafından
+// set ediliyor. QuickJS sadece HTTP response body'sini görür, browser JS
+// çalışmaz. Dolayısıyla A/B/C yöntemleri çok kaynaklı dizilerde boş dönüyor.
+//
+// Yeni D/E katmanları: iframe src'yi ve ?kaynak=N ile alternatif kaynakları
+// doğrudan HTTP fetch ile toplar — JS çalıştırmaya gerek yok.
 
-function parseEmbeds(html) {
-  // A: window.__embeds_b64 = 'BASE64'
+function parseEmbeds(html, epUrl) {
+  // A: window.__embeds_b64
   var b64m = html.match(/window\.__embeds_b64\s*=\s*'([^']+)'/)
           || html.match(/window\.__embeds_b64\s*=\s*"([^"]+)"/);
   if (b64m) {
     var arr = b64decode(b64m[1]);
     if (Array.isArray(arr) && arr.length) {
       log('__embeds_b64: ' + arr.length + ' embed');
-      return arr.filter(Boolean);
+      return Promise.resolve(arr.filter(Boolean));
     }
   }
 
-  // B: window.__embeds = [...]
+  // B: window.__embeds
   var dm = html.match(/window\.__embeds\s*=\s*(\[[^\]]{10,}\])/);
   if (dm) {
     try {
       var arr2 = JSON.parse(dm[1]);
       if (Array.isArray(arr2) && arr2.length) {
         log('__embeds: ' + arr2.length + ' embed');
-        return arr2.filter(Boolean);
+        return Promise.resolve(arr2.filter(Boolean));
       }
     } catch(e) {}
   }
 
-  // C: Script içinden embed URL'leri
+  // C: Script içinden bilinen embed host URL'leri
   var urls = [], seen = {};
   var scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   var sm;
@@ -310,12 +285,119 @@ function parseEmbeds(html) {
       if (!seen[u]) { seen[u] = true; urls.push(u); }
     }
   }
-  if (urls.length) log('Script parse: ' + urls.length + ' embed');
-  return urls;
+  if (urls.length) {
+    log('Script parse: ' + urls.length + ' embed');
+    return Promise.resolve(urls);
+  }
+
+  // D: YENİ — <iframe id="playerFrame" src="..."> direkt yakala
+  //    Cizgivedizi tek kaynaklı dizilerde (DuckTales gibi) embed URL'yi
+  //    doğrudan iframe src'ye yazar; bu server-side HTML'de mevcut.
+  var iframeSrc = extractPlayerFrameSrc(html);
+  if (iframeSrc) {
+    log('playerFrame fallback: ' + iframeSrc.slice(0, 80));
+    // E katmanını da çalıştır — başka kaynaklar olabilir
+    return fetchAllKaynakEmbeds(html, epUrl, [iframeSrc]);
+  }
+
+  // E: YENİ — data-kaynak butonları var ama iframe src boşsa
+  //    (dinamik yüklemeli sayfalar için her ?kaynak=N URL'sini ayrı fetch at)
+  return fetchAllKaynakEmbeds(html, epUrl, []);
+}
+
+/**
+ * <iframe id="playerFrame" src="URL"> → URL'i döndürür.
+ * src="cid:..." gibi MHT artefaktlarını filtreler.
+ * Sitede iframe src attribute sırası farklı olabilir, her ikisini de dener.
+ */
+function extractPlayerFrameSrc(html) {
+  // Önce id="playerFrame" src="..." sırası
+  var m = html.match(/id=["']playerFrame["'][^>]*\bsrc=["']([^"']+)["']/i)
+       || html.match(/\bsrc=["']([^"']+)["'][^>]*id=["']playerFrame["']/i);
+  if (!m) return null;
+  var src = m[1];
+  // MHT artefaktı veya boş
+  if (!src || src.indexOf('cid:') === 0 || src.trim() === '') return null;
+  // Protokol yoksa ekle
+  if (src.indexOf('//') === 0) src = 'https:' + src;
+  return src;
+}
+
+/**
+ * data-kaynak="N" butonlarını say, her N için epUrl + ?kaynak=N fetch at,
+ * her sayfanın playerFrame iframe src'sini topla.
+ * baseEmbeds: zaten bulunan embed URL listesi (D katmanından gelen)
+ */
+function fetchAllKaynakEmbeds(html, epUrl, baseEmbeds) {
+  // Kaç kaynak var?
+  var kaynakRe = /data-kaynak=["'](\d+)["']/g;
+  var kaynakIds = [];
+  var km;
+  while ((km = kaynakRe.exec(html)) !== null) {
+    var kid = parseInt(km[1]);
+    if (kaynakIds.indexOf(kid) === -1) kaynakIds.push(kid);
+  }
+  kaynakIds.sort(function(a, b) { return a - b; });
+
+  log('data-kaynak butonları: [' + kaynakIds.join(', ') + ']');
+
+  if (!kaynakIds.length) {
+    // Hiç buton yok ve D de boşsa gerçekten embed yok
+    if (baseEmbeds.length) return Promise.resolve(baseEmbeds);
+    log('Embed bulunamadı (tüm katmanlar denendi)');
+    return Promise.resolve([]);
+  }
+
+  // Kaynak 0 zaten yüklü sayfada (baseEmbeds içinde) olabilir, atla
+  var toFetch = kaynakIds.filter(function(kid) { return kid !== 0 || !baseEmbeds.length; });
+
+  var collected = baseEmbeds.slice();
+  var seen = {};
+  baseEmbeds.forEach(function(u) { seen[u] = true; });
+
+  var chain = Promise.resolve();
+
+  toFetch.forEach(function(kid) {
+    chain = chain.then(function() {
+      // ?kaynak=N veya URL'e ekle
+      var sep = epUrl.indexOf('?') !== -1 ? '&' : '?';
+      var kayUrl = epUrl + sep + 'kaynak=' + kid;
+      log('Kaynak ' + kid + ' fetch: ' + kayUrl);
+
+      return getHtml(kayUrl)
+        .then(function(kayHtml) {
+          var src = extractPlayerFrameSrc(kayHtml);
+          if (src && !seen[src]) {
+            seen[src] = true;
+            collected.push(src);
+            log('Kaynak ' + kid + ' embed: ' + src.slice(0, 80));
+          } else {
+            // Script içi URL'lere de bak
+            var urlRe2 = /["'`]((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'`\s<>]+|my\.mail\.ru\/video\/embed\/[^"'`\s<>]+|www\.mp4upload\.com\/embed-[^"'`\s<>]+|vidmoly\.to\/e\/[^"'`\s<>]+|ok\.ru\/videoembed\/[^"'`\s<>]+|vk\.com\/video_ext[^"'`\s<>]+))/gi;
+            var um2;
+            var sc2 = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+            var sm2;
+            while ((sm2 = sc2.exec(kayHtml)) !== null) {
+              while ((um2 = urlRe2.exec(sm2[1])) !== null) {
+                var u2 = um2[1];
+                if (!seen[u2]) { seen[u2] = true; collected.push(u2); }
+              }
+            }
+            if (!src) log('Kaynak ' + kid + ' embed bulunamadı');
+          }
+        })
+        .catch(function(e) { log('Kaynak ' + kid + ' fetch hata: ' + e.message); });
+    });
+  });
+
+  return chain.then(function() {
+    log('Toplam embed: ' + collected.length);
+    return collected;
+  });
 }
 
 function parseSourceNames(html) {
-  var names = [], re = /data-kaynak="(\d+)"[^>]*>\s*([^<]+?)\s*<\/a>/gi, m;
+  var names = [], re = /data-kaynak=["'](\d+)["'][^>]*>\s*([^<]+?)\s*<\/a>/gi, m;
   while ((m = re.exec(html)) !== null) names[parseInt(m[1])] = m[2].trim();
   return names;
 }
@@ -331,21 +413,52 @@ function toAbs(url) {
 
 function isVideoUrl(url) {
   var p = (url || '').toLowerCase().split('?')[0];
-  var bad = ['.css','.js','.woff','.woff2','.ttf','.eot','.png','.jpg','.gif','.svg','.ico','.map','.json'];
+  var bad = ['.css','.js','.woff','.woff2','.ttf','.eot','.png','.jpg',
+             '.gif','.svg','.ico','.map','.json'];
   for (var i = 0; i < bad.length; i++) if (p.slice(-bad[i].length) === bad[i]) return false;
   return p.indexOf('.m3u8') !== -1 || p.indexOf('.mp4') !== -1;
 }
 
+/**
+ * Sibnet shell.php extractor — GÜNCELLENDİ
+ *
+ * Eski yöntem: player.src([{src:"...mp4"}]) regex
+ *   → external JS'te olduğu için QuickJS'de hiç görünmüyordu
+ *
+ * Yeni yöntem: <video src="..."> veya <source src="..."> yakala
+ *   → server-side HTML'de mevcut (MHT analiziyle doğrulandı)
+ *
+ * Örnek: https://video.sibnet.ru/v/HASH/5279020.mp4
+ */
 function extractSibnet(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/' })
+  return getHtml(full, { 'Referer': SIBNET_HOST + '/' })
     .then(function(html) {
-      var m = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)["']/i)
-           || html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4)["']/i);
-      if (!m) return null;
-      var mp4 = m[1].indexOf('http') === 0 ? m[1] : SIBNET_HOST + m[1];
-      return { url: mp4, type: 'direct', headers: { 'Referer': full } };
-    }).catch(function() { return null; });
+      // 1. <video src="...mp4"> — doğrudan video tag'ı
+      var m = html.match(/<video[^>]*\bsrc=["']([^"']+\.mp4[^"']*)["']/i);
+      if (m) return { url: m[1], type: 'direct', headers: { 'Referer': full } };
+
+      // 2. <source src="...mp4"> — video tag içindeki source
+      var m2 = html.match(/<source[^>]*\bsrc=["']([^"']+\.mp4[^"']*)["']/i);
+      if (m2) return { url: m2[1], type: 'direct', headers: { 'Referer': full } };
+
+      // 3. player.src([{src:"..."}]) — script tagları gelmişse
+      var m3 = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)/i);
+      if (m3) {
+        var mp4 = m3[1].indexOf('http') === 0 ? m3[1] : SIBNET_HOST + m3[1];
+        return { url: mp4, type: 'direct', headers: { 'Referer': full } };
+      }
+
+      // 4. Herhangi bir sibnet.ru mp4 URL'i
+      var m4 = html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4[^"']*)["']/i);
+      if (m4) {
+        var mp4b = m4[1].indexOf('http') === 0 ? m4[1] : SIBNET_HOST + m4[1];
+        return { url: mp4b, type: 'direct', headers: { 'Referer': full } };
+      }
+
+      log('Sibnet: MP4 bulunamadı → ' + full.slice(0, 80));
+      return null;
+    }).catch(function(e) { log('Sibnet hata: ' + e.message); return null; });
 }
 
 function extractVidmoly(url) {
@@ -386,7 +499,7 @@ function extractMailRu(url) {
 function extractStream(url) {
   var full = toAbs(url);
   if (!full) return Promise.resolve(null);
-  var lo   = full.toLowerCase();
+  var lo = full.toLowerCase();
   if (lo.indexOf('sibnet')    !== -1) return extractSibnet(url);
   if (lo.indexOf('vidmoly')   !== -1) return extractVidmoly(url);
   if (lo.indexOf('mp4upload') !== -1) return extractMp4upload(url);
@@ -419,44 +532,40 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var epGlobal = res[1];
 
       return findContent(info, mediaType).then(function(item) {
-        if (!item) {
-          log('İçerik bulunamadı');
-          return [];
-        }
+        if (!item) { log('İçerik bulunamadı'); return []; }
         log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
         var epUrl = buildEpUrl(item, mediaType, epGlobal);
         log('Bölüm URL: ' + epUrl);
 
         return getHtml(epUrl).then(function(html) {
-          var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
-          if (!embeds.length) {
-            log('Embed bulunamadı');
-            return [];
-          }
-          log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
+          // parseEmbeds artık async — ?kaynak=N fetch'leri yapıyor
+          return parseEmbeds(html, epUrl).then(function(embeds) {
+            if (!embeds.length) { log('Embed bulunamadı'); return []; }
+            log(embeds.length + ' embed: ' + embeds.slice(0,3).join(', '));
 
-          return Promise.all(
-            embeds.map(function(embedUrl, idx) {
-              return extractStream(embedUrl).then(function(stream) {
-                if (!stream) return null;
-                var srcName = srcNames[idx] || ('Kaynak ' + idx);
-                return {
-                  name:    info.title,
-                  title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
-                  url:     stream.url,
-                  quality: 'Auto',
-                  type:    stream.type,
-                  headers: stream.headers || {}
-                };
-              });
-            })
-          ).then(function(all) {
-            var filtered = all.filter(Boolean);
-            log('Stream sayısı: ' + filtered.length);
-            return filtered;
+            return Promise.all(
+              embeds.map(function(embedUrl, idx) {
+                return extractStream(embedUrl).then(function(stream) {
+                  if (!stream) return null;
+                  var srcName = srcNames[idx] || ('Kaynak ' + idx);
+                  return {
+                    name:    info.title,
+                    title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
+                    url:     stream.url,
+                    quality: 'Auto',
+                    type:    stream.type,
+                    headers: stream.headers || {}
+                  };
+                });
+              })
+            ).then(function(all) {
+              var filtered = all.filter(Boolean);
+              log('Stream sayısı: ' + filtered.length);
+              return filtered;
+            });
           });
         });
       });
