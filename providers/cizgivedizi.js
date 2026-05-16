@@ -1,20 +1,18 @@
 /**
- * CizgiVeDizi — Nuvio Provider (v11-FIXED)
- * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
+ * CizgiVeDizi — Nuvio Provider
  */
 
 var BASE_URL    = 'https://www.cizgivedizi.com';
 var TMDB_KEY    = '500330721680edb6d5f7f12ba7cd9023';
 var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
-var STREAM_TIMEOUT = 8000; // 8s per stream
+var STREAM_TIMEOUT = 10000;
 
-// Arama için sabit anchor (/_/ path 404 veriyor)
 var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
 var SEARCH_FILM = BASE_URL + '/film/_/_';
 
 var HEADERS = {
-  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
   'Referer':         BASE_URL + '/'
@@ -22,19 +20,6 @@ var HEADERS = {
 
 var STOP = ['the','a','an','of','in','on','at','to','and','or','for',
             've','bir','ile','bu','mi','mu','mı','mü','da','de'];
-
-// ── Detect Environment ────────────────────────────────────
-
-function isNuvioEnvironment() {
-  // NuvioTV or NuvioMobile detection
-  if (typeof global !== 'undefined') {
-    return global.__nuvio || global.__nuvioMediator;
-  }
-  if (typeof window !== 'undefined') {
-    return window.__nuvio || window.__nuvioMediator;
-  }
-  return false;
-}
 
 // ── Log ──────────────────────────────────────────────────────
 
@@ -52,59 +37,48 @@ function norm(s) {
     .replace(/[^a-z0-9]/g,'');
 }
 
-// ── Fetch with Timeout ────────────────────────────────────
+// ── Base64 Decode (Simple & Robust) ──────────────────────────
 
-function fetchWithTimeout(url, options, timeout) {
-  timeout = timeout || STREAM_TIMEOUT;
-  
-  var timeoutId;
-  var timeoutPromise = new Promise(function(resolve, reject) {
-    timeoutId = setTimeout(function() {
-      reject(new Error('Timeout after ' + timeout + 'ms'));
-    }, timeout);
-  });
+function b64decode(b64) {
+  if (!b64 || typeof b64 !== 'string') return null;
 
-  var fetchPromise = fetch(url, options || {})
-    .then(function(r) {
-      clearTimeout(timeoutId);
-      return r;
-    })
-    .catch(function(e) {
-      clearTimeout(timeoutId);
-      throw e;
-    });
+  // Try 1: Node.js Buffer
+  if (typeof Buffer !== 'undefined') {
+    try {
+      var decoded = Buffer.from(b64, 'base64').toString('utf8');
+      var parsed = JSON.parse(decoded);
+      log('b64decode: Buffer method OK (' + (Array.isArray(parsed) ? parsed.length : 0) + ' items)');
+      return parsed;
+    } catch(e) {
+      log('b64decode: Buffer failed - ' + e.message);
+    }
+  }
 
-  // Fallback for environments without Promise.race
-  return fetchPromise.catch(function(err) {
-    clearTimeout(timeoutId);
-    throw err;
-  });
+  // Try 2: Browser atob
+  if (typeof atob !== 'undefined') {
+    try {
+      var decoded = atob(b64);
+      var parsed = JSON.parse(decoded);
+      log('b64decode: atob method OK (' + (Array.isArray(parsed) ? parsed.length : 0) + ' items)');
+      return parsed;
+    } catch(e) {
+      log('b64decode: atob failed - ' + e.message);
+    }
+  }
+
+  // Fallback: Return null, other parseEmbeds methods will handle it
+  log('b64decode: No compatible decoder found, using fallback');
+  return null;
 }
 
 // ── Fetch ────────────────────────────────────────────────────
 
 function getHtml(url, extra) {
-  return fetchWithTimeout(url, { headers: Object.assign({}, HEADERS, extra || {}) })
+  return fetch(url, { headers: Object.assign({}, HEADERS, extra || {}) })
     .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.text();
     });
-}
-
-// ── Base64 decode (Hermes uyumlu) ────────────────────────────
-
-function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
-  if (typeof Buffer !== 'undefined') {
-    try {
-      return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    } catch(e) {}
-  }
-  // atob: RN 0.73+ ve tarayıcı
-  if (typeof atob !== 'undefined') {
-    try { return JSON.parse(atob(b64)); } catch(e) {}
-  }
-  return null;
 }
 
 // ── Slug encode ──────────────────────────────────────────────
@@ -128,14 +102,12 @@ function fetchTmdbInfo(tmdbId, mediaType) {
   return fetch(url)
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      var info = {
+      return {
         title:   d.title   || d.name                 || '',
         titleTr: d.title   || d.name                 || '',
         titleEn: d.original_title || d.original_name || '',
         year:    (d.release_date || d.first_air_date  || '').slice(0, 4)
       };
-      log('TMDB: "' + info.titleEn + '" / "' + info.titleTr + '" (' + info.year + ')');
-      return info;
     });
 }
 
@@ -227,18 +199,12 @@ function fetchYearFromPage(item, mediaType) {
 
 function findContent(info, mediaType) {
   var queries = buildQueries(info.titleTr, info.titleEn);
-  log('Sorgular: ' + JSON.stringify(queries.slice(0, 5)) + (queries.length > 5 ? '...' : ''));
 
   return queries.reduce(function(chain, query) {
     return chain.then(function(found) {
       if (found) return found;
       return searchSite(query, mediaType).then(function(results) {
-        if (!results.length) {
-          log('Sorgu "' + query + '" → 0 sonuç');
-          return null;
-        }
-        log('Sorgu "' + query + '" → ' + results.length + ' sonuç: [' +
-            results.map(function(r) { return r.id; }).join(', ') + ']');
+        if (!results.length) return null;
 
         var allScored = results
           .map(function(item) {
@@ -247,21 +213,13 @@ function findContent(info, mediaType) {
           .sort(function(a, b) { return b.score - a.score; });
 
         var candidates = allScored.filter(function(c) { return c.score >= 70; });
-
-        if (candidates.length === 0) {
-          log('Yüksek puan yok');
-          return null;
-        }
+        if (candidates.length === 0) return null;
 
         var best = candidates[0];
         var tied = candidates.filter(function(c) { return c.score === best.score; });
 
-        if (tied.length === 1) {
-          log('En iyi eşleşme: "' + best.item.name + '" (' + best.score + ')');
-          return best.item;
-        }
+        if (tied.length === 1) return best.item;
 
-        log('Berabere (' + tied.length + ' adaylı): yıl kontrolü...');
         return Promise.all(tied.map(function(c) {
           return fetchYearFromPage(c.item, mediaType)
             .then(function(year) {
@@ -269,12 +227,7 @@ function findContent(info, mediaType) {
             });
         })).then(function(withYears) {
           var byYear = withYears.filter(function(w) { return w.year === info.year; });
-          if (byYear.length > 0) {
-            log('Yıl eşleşti: "' + byYear[0].item.name + '"');
-            return byYear[0].item;
-          }
-          log('Yıl eşleşmedi, ilk aday: "' + withYears[0].item.name + '"');
-          return withYears[0].item;
+          return (byYear.length > 0 ? byYear[0] : withYears[0]).item;
         });
       });
     });
@@ -296,42 +249,36 @@ function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
       );
     })(s);
   }
-
   return Promise.all(promises).then(function(counts) {
-    var total = counts.reduce(function(a, b) { return a + b; }, 0);
-    log('Global ep: S' + seasonNum + 'E' + episodeNum +
-        ' → önceki sezonlar=' + total + ' → global #' + (total + episodeNum));
-    return total + episodeNum;
+    return counts.reduce(function(a, b) { return a + b; }, 0) + episodeNum;
   });
 }
 
 // ── 4. HTML → embed URL'leri ─────────────────────────────────
 
 function parseEmbeds(html) {
-  // A: window.__embeds_b64 = 'BASE64'
+  // Method A: window.__embeds_b64
   var b64m = html.match(/window\.__embeds_b64\s*=\s*'([^']+)'/)
           || html.match(/window\.__embeds_b64\s*=\s*"([^"]+)"/);
   if (b64m) {
     var arr = b64decode(b64m[1]);
     if (Array.isArray(arr) && arr.length) {
-      log('__embeds_b64: ' + arr.length + ' embed');
       return arr.filter(Boolean);
     }
   }
 
-  // B: window.__embeds = [...]
+  // Method B: window.__embeds = [...]
   var dm = html.match(/window\.__embeds\s*=\s*(\[[^\]]{10,}\])/);
   if (dm) {
     try {
       var arr2 = JSON.parse(dm[1]);
       if (Array.isArray(arr2) && arr2.length) {
-        log('__embeds: ' + arr2.length + ' embed');
         return arr2.filter(Boolean);
       }
     } catch(e) {}
   }
 
-  // C: Script içinden embed URL'leri
+  // Method C: Script URL parsing (fallback)
   var urls = [], seen = {};
   var scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   var sm;
@@ -343,13 +290,29 @@ function parseEmbeds(html) {
       if (!seen[u]) { seen[u] = true; urls.push(u); }
     }
   }
-  if (urls.length) log('Script parse: ' + urls.length + ' embed');
-  return urls;
+  
+  if (urls.length) {
+    log('parseEmbeds fallback: ' + urls.length + ' URL found in scripts');
+    return urls;
+  }
+
+  log('parseEmbeds: No embeds found');
+  return [];
 }
 
 function parseSourceNames(html) {
-  var names = [], re = /data-kaynak="(\d+)"[^>]*>\s*([^<]+?)\s*<\/a>/gi, m;
-  while ((m = re.exec(html)) !== null) names[parseInt(m[1])] = m[2].trim();
+  var names = [];
+  // Improved: handle newlines and whitespace
+  var re = /data-kaynak="(\d+)"[^>]*>\s*([^\n<]+?)\s*</gi;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    var idx = parseInt(m[1]);
+    var name = (m[2] || '').trim();
+    if (name && name.length > 0) {
+      names[idx] = name;
+    }
+  }
+  log('parseSourceNames: ' + Object.keys(names).length + ' names found');
   return names;
 }
 
@@ -378,10 +341,7 @@ function extractSibnet(url) {
       if (!m) return null;
       var mp4 = m[1].indexOf('http') === 0 ? m[1] : SIBNET_HOST + m[1];
       return { url: mp4, type: 'direct', headers: { 'Referer': full } };
-    }).catch(function(e) {
-      log('Sibnet error: ' + e.message);
-      return null;
-    });
+    }).catch(function() { return null; });
 }
 
 function extractVidmoly(url) {
@@ -390,10 +350,7 @@ function extractVidmoly(url) {
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
-    }).catch(function(e) {
-      log('Vidmoly error: ' + e.message);
-      return null;
-    });
+    }).catch(function() { return null; });
 }
 
 function extractMp4upload(url) {
@@ -410,10 +367,7 @@ function extractMp4upload(url) {
           return { url: all[i], type: all[i].indexOf('.m3u8') !== -1 ? 'hls' : 'direct', headers: { 'Referer': full } };
       }
       return null;
-    }).catch(function(e) {
-      log('MP4upload error: ' + e.message);
-      return null;
-    });
+    }).catch(function() { return null; });
 }
 
 function extractMailRu(url) {
@@ -422,10 +376,7 @@ function extractMailRu(url) {
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
-    }).catch(function(e) {
-      log('Mail.ru error: ' + e.message);
-      return null;
-    });
+    }).catch(function() { return null; });
 }
 
 function extractStream(url) {
@@ -436,28 +387,23 @@ function extractStream(url) {
   if (lo.indexOf('vidmoly')   !== -1) return extractVidmoly(url);
   if (lo.indexOf('mp4upload') !== -1) return extractMp4upload(url);
   if (lo.indexOf('mail.ru')   !== -1) return extractMailRu(url);
-  log('Desteklenmeyen embed: ' + full.slice(0, 60));
   return Promise.resolve(null);
 }
 
-// ── FIXED: Sequential Stream Processing ──────────────────────
+// ── Sequential Stream Processing ────────────────────────────
 
 function getStreamsSequential(embeds, srcNames, info) {
   var results = [];
   var completed = 0;
 
-  function processNextStream(idx) {
+  function processStream(idx) {
     if (idx >= embeds.length) {
-      log('✓ Tüm streamler işlendi: ' + completed + '/' + embeds.length);
       return Promise.resolve(results);
     }
 
-    var embedUrl = embeds[idx];
     var srcName = srcNames[idx] || ('Kaynak ' + idx);
 
-    log('→ Stream ' + (idx+1) + '/' + embeds.length + ' işleniyor: ' + srcName);
-
-    return extractStream(embedUrl)
+    return extractStream(embeds[idx])
       .then(function(stream) {
         if (stream) {
           completed++;
@@ -469,23 +415,18 @@ function getStreamsSequential(embeds, srcNames, info) {
             type:    stream.type,
             headers: stream.headers || {}
           });
-          log('  ✓ ' + srcName + ' OK');
-        } else {
-          log('  ✗ ' + srcName + ' (no stream)');
         }
       })
-      .catch(function(err) {
-        log('  ✗ ' + srcName + ' hata: ' + (err.message || String(err)));
-      })
+      .catch(function() {})
       .then(function() {
-        return processNextStream(idx + 1);
+        return processStream(idx + 1);
       });
   }
 
-  return processNextStream(0);
+  return processStream(0);
 }
 
-// ── Ana Akış ─────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────
 
 function buildEpUrl(item, mediaType, epGlobalNo) {
   if (mediaType === 'movie')
@@ -495,11 +436,7 @@ function buildEpUrl(item, mediaType, epGlobalNo) {
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  log('START tmdbId=' + tmdbId + ' type=' + mediaType +
-      (mediaType === 'tv' ? ' S' + season + 'E' + episode : ''));
-
-  var isNuvio = isNuvioEnvironment();
-  if (isNuvio) log('[NuvioTV DETECTED] Using sequential processing');
+  log('START ' + mediaType + ' tmdbId=' + tmdbId);
 
   var infoP = fetchTmdbInfo(tmdbId, mediaType);
   var epNoP = mediaType === 'tv'
@@ -513,31 +450,27 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       return findContent(info, mediaType).then(function(item) {
         if (!item) {
-          log('İçerik bulunamadı');
+          log('Content not found');
           return [];
         }
-        log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
         var epUrl = buildEpUrl(item, mediaType, epGlobal);
-        log('Bölüm URL: ' + epUrl);
-
         return getHtml(epUrl).then(function(html) {
           var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
-          if (!embeds.length) {
-            log('Embed bulunamadı');
+          if (!embeds || embeds.length === 0) {
+            log('No embeds found');
             return [];
           }
-          log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
 
-          // FIXED: Use sequential processing
+          log('Found ' + embeds.length + ' embed(s), extracting...');
           return getStreamsSequential(embeds, srcNames, info);
         });
       });
     })
     .catch(function(e) {
-      log('HATA: ' + e.message);
+      log('ERROR: ' + e.message);
       return [];
     });
 }
