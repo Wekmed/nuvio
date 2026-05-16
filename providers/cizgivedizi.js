@@ -13,7 +13,7 @@ var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
 var SEARCH_FILM = BASE_URL + '/film/_/_';
 
 var HEADERS = {
-  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+  'User-Agent':      'EasyPlex (Android 14; SM-A546B; Samsung Galaxy A54 5G; tr)',
   'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
   'Referer':         BASE_URL + '/'
@@ -43,25 +43,25 @@ function norm(s) {
 function getHtml(url, extra) {
   return fetch(url, { headers: Object.assign({}, HEADERS, extra || {}) })
     .then(function(r) {
-      if (r.status < 200 || r.status >= 400) throw new Error('HTTP ' + r.status + ' → ' + url);
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
       return r.text();
     });
 }
 
 // ── Base64 decode (Hermes uyumlu) ────────────────────────────
 
-var _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 function b64decode(b64) {
-  try {
-    var str = (b64 || '').replace(/[^A-Za-z0-9+/]/g, '');
-    var out = '', bits = 0, buf = 0;
-    for (var i = 0; i < str.length; i++) {
-      buf = (buf << 6) | _B64.indexOf(str[i]);
-      bits += 6;
-      if (bits >= 8) { bits -= 8; out += String.fromCharCode((buf >> bits) & 0xFF); }
-    }
-    return JSON.parse(out);
-  } catch(e) { return null; }
+  // Buffer: RN'de her zaman var, atob'dan daha güvenli
+  if (typeof Buffer !== 'undefined') {
+    try {
+      return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    } catch(e) {}
+  }
+  // atob: RN 0.73+ ve tarayıcı
+  if (typeof atob !== 'undefined') {
+    try { return JSON.parse(atob(b64)); } catch(e) {}
+  }
+  return null;
 }
 
 // ── Slug encode ──────────────────────────────────────────────
@@ -136,7 +136,7 @@ function searchSite(query, mediaType) {
       'X-Requested-With': 'XMLHttpRequest'
     })
   })
-    .then(function(r) { return (r.status >= 200 && r.status < 400) ? r.json() : []; })
+    .then(function(r) { return r.ok ? r.json() : []; })
     .catch(function() { return []; });
 }
 
@@ -438,28 +438,25 @@ function getStreams(tmdbId, mediaType, season, episode) {
           }
           log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
 
-          var streams = [], idx = 0;
-          function nextEmbed() {
-            if (idx >= embeds.length) return Promise.resolve(streams);
-            var embedUrl = embeds[idx];
-            var srcName  = srcNames[idx] || ('Kaynak ' + idx);
-            idx++;
-            return extractStream(embedUrl).then(function(stream) {
-              if (stream) {
-                streams.push({
-                  name:    'CizgiveDizi',
-                  title:   '⌜ CizgiveDizi ⌟ | ' + srcName,
+          return Promise.all(
+            embeds.map(function(embedUrl, idx) {
+              return extractStream(embedUrl).then(function(stream) {
+                if (!stream) return null;
+                var srcName = srcNames[idx] || ('Kaynak ' + idx);
+                return {
+                  name:    info.title,
+                  title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
                   url:     stream.url,
                   quality: 'Auto',
+                  type:    stream.type,
                   headers: stream.headers || {}
-                });
-              }
-              return nextEmbed();
-            }).catch(function() { return nextEmbed(); });
-          }
-          return nextEmbed().then(function(all) {
-            log('Stream sayısı: ' + all.length);
-            return all;
+                };
+              });
+            })
+          ).then(function(all) {
+            var filtered = all.filter(Boolean);
+            log('Stream sayısı: ' + filtered.length);
+            return filtered;
           });
         });
       });
@@ -471,8 +468,4 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 // ── Export ───────────────────────────────────────────────────
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getStreams: getStreams };
-} else {
-  global.getStreams = getStreams;
-}
+module.exports = { getStreams };
