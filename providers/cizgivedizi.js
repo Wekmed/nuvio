@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Providerv
+ * CizgiVeDizi — Nuvio Provider  (v11)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -87,15 +87,25 @@ function getHtmlFull(url) {
 // ── Base64 decode (Hermes uyumlu) ────────────────────────────
 
 function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
+  // QuickJS (Nuvio): atob var, Buffer yok
   if (typeof Buffer !== 'undefined') {
     try {
       return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
     } catch(e) {}
   }
-  // atob: RN 0.73+ ve tarayıcı
   if (typeof atob !== 'undefined') {
-    try { return JSON.parse(atob(b64)); } catch(e) {}
+    try {
+      // UTF-8 güvenli decode: binary → %XX → decodeURIComponent
+      var bin = atob(b64);
+      var pct = '';
+      for (var i = 0; i < bin.length; i++) {
+        pct += '%' + ('00' + bin.charCodeAt(i).toString(16)).slice(-2);
+      }
+      return JSON.parse(decodeURIComponent(pct));
+    } catch(e) {
+      // Fallback: direkt parse
+      try { return JSON.parse(atob(b64)); } catch(e2) {}
+    }
   }
   return null;
 }
@@ -429,15 +439,11 @@ function isVideoUrl(url) {
 }
 
 function extractSibnet(url) {
+  // Sibnet shell.php URL'sini direkt stream olarak dön.
+  // İçine girip MP4 aramak Nuvio sandbox'ta çalışmıyor.
+  // Nuvio player Sibnet iframe'i zaten oynatabiliyor.
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/' })
-    .then(function(html) {
-      var m = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)["']/i)
-           || html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4)["']/i);
-      if (!m) return null;
-      var mp4 = m[1].indexOf('http') === 0 ? m[1] : SIBNET_HOST + m[1];
-      return { url: mp4, type: 'direct', headers: { 'Referer': full } };
-    }).catch(function() { return null; });
+  return Promise.resolve({ url: full, type: 'iframe', headers: { 'Referer': BASE_URL + '/' } });
 }
 
 function extractVidmoly(url) {
