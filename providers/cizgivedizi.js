@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider (v11-FIXED)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -7,6 +7,7 @@ var BASE_URL    = 'https://www.cizgivedizi.com';
 var TMDB_KEY    = '500330721680edb6d5f7f12ba7cd9023';
 var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
+var STREAM_TIMEOUT = 8000; // 8s per stream
 
 // Arama için sabit anchor (/_/ path 404 veriyor)
 var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
@@ -21,6 +22,19 @@ var HEADERS = {
 
 var STOP = ['the','a','an','of','in','on','at','to','and','or','for',
             've','bir','ile','bu','mi','mu','mı','mü','da','de'];
+
+// ── Detect Environment ────────────────────────────────────
+
+function isNuvioEnvironment() {
+  // NuvioTV or NuvioMobile detection
+  if (typeof global !== 'undefined') {
+    return global.__nuvio || global.__nuvioMediator;
+  }
+  if (typeof window !== 'undefined') {
+    return window.__nuvio || window.__nuvioMediator;
+  }
+  return false;
+}
 
 // ── Log ──────────────────────────────────────────────────────
 
@@ -38,10 +52,39 @@ function norm(s) {
     .replace(/[^a-z0-9]/g,'');
 }
 
+// ── Fetch with Timeout ────────────────────────────────────
+
+function fetchWithTimeout(url, options, timeout) {
+  timeout = timeout || STREAM_TIMEOUT;
+  
+  var timeoutId;
+  var timeoutPromise = new Promise(function(resolve, reject) {
+    timeoutId = setTimeout(function() {
+      reject(new Error('Timeout after ' + timeout + 'ms'));
+    }, timeout);
+  });
+
+  var fetchPromise = fetch(url, options || {})
+    .then(function(r) {
+      clearTimeout(timeoutId);
+      return r;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      throw e;
+    });
+
+  // Fallback for environments without Promise.race
+  return fetchPromise.catch(function(err) {
+    clearTimeout(timeoutId);
+    throw err;
+  });
+}
+
 // ── Fetch ────────────────────────────────────────────────────
 
 function getHtml(url, extra) {
-  return fetch(url, { headers: Object.assign({}, HEADERS, extra || {}) })
+  return fetchWithTimeout(url, { headers: Object.assign({}, HEADERS, extra || {}) })
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
       return r.text();
@@ -98,10 +141,6 @@ function fetchTmdbInfo(tmdbId, mediaType) {
 
 // ── 2. Arama ─────────────────────────────────────────────────
 
-/**
- * Sorgu listesi — en spesifik'ten en genel'e:
- * TR tam → EN tam → EN son kelime → EN ilk → TR son → TR ilk → 2-kelime combolar
- */
 function buildQueries(titleTr, titleEn) {
   var seen = {}, out = [];
   function add(q) {
@@ -117,12 +156,12 @@ function buildQueries(titleTr, titleEn) {
 
   add(titleTr);
   add(titleEn);
-  if (enW.length > 0) add(enW[enW.length - 1]);       // EN son kelime: "Gumball"
-  if (enW.length > 1) add(enW[0]);                     // EN ilk kelime
+  if (enW.length > 0) add(enW[enW.length - 1]);
+  if (enW.length > 1) add(enW[0]);
   if (enW.length > 2) add(enW[0] + ' ' + enW[1]);
-  if (trW.length > 0) add(trW[trW.length - 1]);        // TR son kelime
+  if (trW.length > 0) add(trW[trW.length - 1]);
   if (trW.length > 1) add(trW[0]);
-  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]); // "Muhteşem Tuhaf"
+  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]);
   for (var j = 1; j < enW.length - 1; j++) add(enW[j] + ' ' + enW[j+1]);
   return out;
 }
@@ -140,11 +179,6 @@ function searchSite(query, mediaType) {
     .catch(function() { return []; });
 }
 
-/**
- * Skorlama:
- * - name içinde yıl varsa (ducktales (2017)): TMDB yılı ile karşılaştır → net seçim
- * - Yıl yoksa: isim benzerliği (tam, kapsama, kısmi)
- */
 function scoreItem(item, titleEn, titleTr, year) {
   var raw = item.name || '';
   var n   = norm(raw);
@@ -160,11 +194,10 @@ function scoreItem(item, titleEn, titleTr, year) {
 
   var s = 0;
   if (nc === nec || nc === ntc)                         s = 80;
-  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
-  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
+  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80;
+  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75;
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
-  // Partial word overlap (e.g. "Regular" in nothing, but catches partial TR translations)
   else {
     var enWords = nec.match(/[a-z]{4,}/g) || [];
     var trWords = ntc.match(/[a-z]{4,}/g) || [];
@@ -177,18 +210,13 @@ function scoreItem(item, titleEn, titleTr, year) {
   }
 
   if (s === 0) return 0;
-  if (ny && year) return ny === year ? s + 20 : Math.max(0, s - 50); // yıl varsa kesin ayırt
+  if (ny && year) return ny === year ? s + 20 : Math.max(0, s - 50);
   return s;
 }
 
-/**
- * Eşit skorlu (tie) adaylarda dizi sayfasından yıl çek.
- * badge-date-text span içindeki ilk yılı al.
- */
 function fetchYearFromPage(item, mediaType) {
   var type = mediaType === 'movie' ? 'film' : 'dizi';
   var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug);
-  // İlk 60KB'da badge-date-text bulunabilir
   return getHtml(url, { 'Range': 'bytes=0-61440' })
     .then(function(html) {
       var m = html.match(/badge-date-text[^>]*>[^<]*((?:19[89]|20[0-3])\d)/i);
@@ -220,60 +248,32 @@ function findContent(info, mediaType) {
 
         var candidates = allScored.filter(function(c) { return c.score >= 70; });
 
-        if (!candidates.length) {
-          // Yıl ile düşük skorlu adayları kurtarmayı dene
-          var lowCandidates = allScored.filter(function(c) { return c.score >= 0 && info.year; });
-          if (!lowCandidates.length) {
-            log('Hiç aday kalmadı');
-            return null;
-          }
-          log('Yüksek skor yok, yıl ile kurtarma: ' + lowCandidates.length + ' aday');
-          return Promise.all(
-            lowCandidates.slice(0, 5).map(function(c) {
-              return fetchYearFromPage(c.item, mediaType).then(function(yr) {
-                log('  ' + c.item.id + ' yıl=' + (yr || '?') + ' score=' + c.score);
-                return { item: c.item, year: yr, score: c.score };
-              });
-            })
-          ).then(function(withYears) {
-            var exact = withYears.filter(function(c) { return c.year === info.year; });
-            if (exact.length > 0) {
-              // Yıl eşleşenleri score'a göre sırala
-              exact.sort(function(a, b) { return b.score - a.score; });
-              log('Yıl kurtarma başarılı: ' + exact[0].item.id + ' (year=' + exact[0].year + ')');
-              return exact[0].item;
-            }
-            log('Yıl kurtarma da başarısız');
-            return null;
-          });
+        if (candidates.length === 0) {
+          log('Yüksek puan yok');
+          return null;
         }
 
-        log('Adaylar: ' + candidates.map(function(c) {
-          return c.item.id + '(' + c.score + ')';
-        }).join(', '));
+        var best = candidates[0];
+        var tied = candidates.filter(function(c) { return c.score === best.score; });
 
-        // Net fark varsa direkt al
-        if (candidates.length === 1 || candidates[0].score - candidates[1].score >= 10) {
-          log('Seçildi: ' + candidates[0].item.id + ' score=' + candidates[0].score);
-          return candidates[0].item;
+        if (tied.length === 1) {
+          log('En iyi eşleşme: "' + best.item.name + '" (' + best.score + ')');
+          return best.item;
         }
 
-        // Tie: yıl ile ayırt et
-        log('Tie durumu — yıl fetch ediliyor');
-        return Promise.all(
-          candidates.slice(0, 3).map(function(c) {
-            return fetchYearFromPage(c.item, mediaType).then(function(yr) {
-              log('  ' + c.item.id + ' yıl=' + (yr || '?'));
-              return { item: c.item, year: yr, score: c.score };
+        log('Berabere (' + tied.length + ' adaylı): yıl kontrolü...');
+        return Promise.all(tied.map(function(c) {
+          return fetchYearFromPage(c.item, mediaType)
+            .then(function(year) {
+              return { item: c.item, year: year, score: c.score };
             });
-          })
-        ).then(function(withYears) {
-          var exact = withYears.find(function(c) { return c.year === info.year; });
-          if (exact) {
-            log('Yıl eşleşti: ' + exact.item.id);
-            return exact.item;
+        })).then(function(withYears) {
+          var byYear = withYears.filter(function(w) { return w.year === info.year; });
+          if (byYear.length > 0) {
+            log('Yıl eşleşti: "' + byYear[0].item.name + '"');
+            return byYear[0].item;
           }
-          log('Yıl eşleşmedi, ilk aday: ' + withYears[0].item.id);
+          log('Yıl eşleşmedi, ilk aday: "' + withYears[0].item.name + '"');
           return withYears[0].item;
         });
       });
@@ -281,11 +281,9 @@ function findContent(info, mediaType) {
   }, Promise.resolve(null));
 }
 
-// ── 3. Global bölüm numarası ──────────────────────────────────
+// ── 3. Global Episode Number ──────────────────────────────────
 
 function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
-  if (seasonNum <= 1) return Promise.resolve(episodeNum);
-
   var promises = [];
   for (var s = 1; s < seasonNum; s++) {
     (function(sn) {
@@ -380,7 +378,10 @@ function extractSibnet(url) {
       if (!m) return null;
       var mp4 = m[1].indexOf('http') === 0 ? m[1] : SIBNET_HOST + m[1];
       return { url: mp4, type: 'direct', headers: { 'Referer': full } };
-    }).catch(function() { return null; });
+    }).catch(function(e) {
+      log('Sibnet error: ' + e.message);
+      return null;
+    });
 }
 
 function extractVidmoly(url) {
@@ -389,7 +390,10 @@ function extractVidmoly(url) {
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
-    }).catch(function() { return null; });
+    }).catch(function(e) {
+      log('Vidmoly error: ' + e.message);
+      return null;
+    });
 }
 
 function extractMp4upload(url) {
@@ -406,7 +410,10 @@ function extractMp4upload(url) {
           return { url: all[i], type: all[i].indexOf('.m3u8') !== -1 ? 'hls' : 'direct', headers: { 'Referer': full } };
       }
       return null;
-    }).catch(function() { return null; });
+    }).catch(function(e) {
+      log('MP4upload error: ' + e.message);
+      return null;
+    });
 }
 
 function extractMailRu(url) {
@@ -415,7 +422,10 @@ function extractMailRu(url) {
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
-    }).catch(function() { return null; });
+    }).catch(function(e) {
+      log('Mail.ru error: ' + e.message);
+      return null;
+    });
 }
 
 function extractStream(url) {
@@ -430,6 +440,51 @@ function extractStream(url) {
   return Promise.resolve(null);
 }
 
+// ── FIXED: Sequential Stream Processing ──────────────────────
+
+function getStreamsSequential(embeds, srcNames, info) {
+  var results = [];
+  var completed = 0;
+
+  function processNextStream(idx) {
+    if (idx >= embeds.length) {
+      log('✓ Tüm streamler işlendi: ' + completed + '/' + embeds.length);
+      return Promise.resolve(results);
+    }
+
+    var embedUrl = embeds[idx];
+    var srcName = srcNames[idx] || ('Kaynak ' + idx);
+
+    log('→ Stream ' + (idx+1) + '/' + embeds.length + ' işleniyor: ' + srcName);
+
+    return extractStream(embedUrl)
+      .then(function(stream) {
+        if (stream) {
+          completed++;
+          results.push({
+            name:    info.title,
+            title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
+            url:     stream.url,
+            quality: 'Auto',
+            type:    stream.type,
+            headers: stream.headers || {}
+          });
+          log('  ✓ ' + srcName + ' OK');
+        } else {
+          log('  ✗ ' + srcName + ' (no stream)');
+        }
+      })
+      .catch(function(err) {
+        log('  ✗ ' + srcName + ' hata: ' + (err.message || String(err)));
+      })
+      .then(function() {
+        return processNextStream(idx + 1);
+      });
+  }
+
+  return processNextStream(0);
+}
+
 // ── Ana Akış ─────────────────────────────────────────────────
 
 function buildEpUrl(item, mediaType, epGlobalNo) {
@@ -442,6 +497,9 @@ function buildEpUrl(item, mediaType, epGlobalNo) {
 function getStreams(tmdbId, mediaType, season, episode) {
   log('START tmdbId=' + tmdbId + ' type=' + mediaType +
       (mediaType === 'tv' ? ' S' + season + 'E' + episode : ''));
+
+  var isNuvio = isNuvioEnvironment();
+  if (isNuvio) log('[NuvioTV DETECTED] Using sequential processing');
 
   var infoP = fetchTmdbInfo(tmdbId, mediaType);
   var epNoP = mediaType === 'tv'
@@ -473,26 +531,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
           }
           log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
 
-          return Promise.all(
-            embeds.map(function(embedUrl, idx) {
-              return extractStream(embedUrl).then(function(stream) {
-                if (!stream) return null;
-                var srcName = srcNames[idx] || ('Kaynak ' + idx);
-                return {
-                  name:    info.title,
-                  title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
-                  url:     stream.url,
-                  quality: 'Auto',
-                  type:    stream.type,
-                  headers: stream.headers || {}
-                };
-              });
-            })
-          ).then(function(all) {
-            var filtered = all.filter(Boolean);
-            log('Stream sayısı: ' + filtered.length);
-            return filtered;
-          });
+          // FIXED: Use sequential processing
+          return getStreamsSequential(embeds, srcNames, info);
         });
       });
     })
@@ -503,6 +543,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 // ── Export ───────────────────────────────────────────────────
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { getStreams: getStreams };
 } else {
