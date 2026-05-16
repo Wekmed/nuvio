@@ -9,8 +9,8 @@ var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
 
 // GitHub raw TXT listeleri — kendi repo'nuzun raw linklerini buraya yazın
-var GITHUB_DIZI_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_liste.txt';
-var GITHUB_FILM_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_filmler.txt';
+var GITHUB_DIZI_TXT = 'https://github.com/Wekmed/nuvio/blob/main/providers/cizgivedizi_liste.txt';
+var GITHUB_FILM_TXT = 'https://github.com/Wekmed/nuvio/blob/main/providers/cizgivedizi_filmler.txt';
 
 // Cache — uygulama ömrü boyunca tek seferlik fetch
 var _diziList = null;
@@ -121,12 +121,14 @@ function buildQueries(titleTr, titleEn) {
 
   add(titleTr);
   add(titleEn);
-  if (enW.length > 0) add(enW[enW.length - 1]);       // EN son kelime: "Gumball"
-  if (enW.length > 1) add(enW[0]);                     // EN ilk kelime
-  if (enW.length > 2) add(enW[0] + ' ' + enW[1]);
-  if (trW.length > 0) add(trW[trW.length - 1]);        // TR son kelime
+  if (enW.length > 0) add(enW[enW.length - 1]);            // EN son kelime: "Gumball"
+  if (enW.length > 1) add(enW[0]);                          // EN ilk kelime
+  if (enW.length >= 2) add(enW[0] + ' ' + enW[1]);         // EN ilk 2: "Adventure Time"
+  if (enW.length >= 3) add(enW[0] + ' ' + enW[1] + ' ' + enW[2]); // EN ilk 3
+  if (trW.length > 0) add(trW[trW.length - 1]);             // TR son kelime
   if (trW.length > 1) add(trW[0]);
-  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]); // "Muhteşem Tuhaf"
+  if (trW.length >= 2) add(trW[0] + ' ' + trW[1]);         // TR ilk 2
+  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]);
   for (var j = 1; j < enW.length - 1; j++) add(enW[j] + ' ' + enW[j+1]);
   return out;
 }
@@ -197,8 +199,10 @@ function searchSite(query, mediaType) {
   return loadList(mediaType).then(function(list) {
     var qn = norm(query);
     var hits = list.filter(function(item) {
-      var n = norm(item.name);
-      return n.indexOf(qn) !== -1 || qn.indexOf(n) !== -1;
+      var n  = norm(item.name);
+      var ns = norm(item.slug);  // slug EN ismi taşır: "adventure_time_uzak_diyarlar"
+      return n.indexOf(qn) !== -1 || qn.indexOf(n) !== -1
+          || ns.indexOf(qn) !== -1 || qn.indexOf(ns) !== -1;
     });
     log('TXT arama "' + query + '" → ' + hits.length + ' sonuç');
     return hits;
@@ -207,31 +211,71 @@ function searchSite(query, mediaType) {
 
 /**
  * Skorlama:
- * - name içinde yıl varsa (ducktales (2017)): TMDB yılı ile karşılaştır → net seçim
+ * - Slug da karşılaştırılır (EN isim slug içinde geçiyor olabilir)
+ * - name içinde yıl varsa: TMDB yılı ile karşılaştır → net seçim
  * - Yıl yoksa: isim benzerliği (tam, kapsama, kısmi)
+ *
+ * Örnek: site adı "Adventure Time Uzak Diyarlar", slug "adventure_time_uzak_diyarlar"
+ *        TMDB EN: "Adventure Time Distant Lands"
+ *        → slug norm "adventuretimeuzakdiyarlar" ⊄ "adventuretimedistantlands"
+ *        → ama her iki slug da "adventuretime" ile başlıyor → wordOverlap ile yakalanır
  */
+function wordOverlap(a, b) {
+  // İki normalize string arasındaki ortak 4+ karakter kelime parçası oranı
+  var wa = a.match(/[a-z0-9]{4,}/g) || [];
+  var wb = b.match(/[a-z0-9]{4,}/g) || [];
+  if (!wa.length || !wb.length) return 0;
+  var matches = wa.filter(function(w) { return wb.indexOf(w) !== -1; });
+  return matches.length / Math.max(wa.length, wb.length);
+}
+
 function scoreItem(item, titleEn, titleTr, year) {
-  var raw = item.name || '';
-  var n   = norm(raw);
-  var ne  = norm(titleEn);
-  var nt  = norm(titleTr);
+  var raw  = item.name || '';
+  var slug = norm(item.slug || '');
+  var n    = norm(raw);
+  var ne   = norm(titleEn);
+  var nt   = norm(titleTr);
 
   var nyM = raw.match(/\b(19[89]\d|20[0-3]\d)\b/);
   var ny  = nyM ? nyM[1] : null;
 
   var nc  = n.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
+  var nsc = slug.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
   var nec = ne.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
   var ntc = nt.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
 
   var s = 0;
+
+  // 1) İsim tam eşleşme veya kapsama (mevcut mantık)
   if (nc === nec || nc === ntc)                         s = 80;
   else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
   else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
 
+  // 2) Slug üzerinden EN eşleşme (TR çeviri farkını atlar)
+  //    "adventure_time_uzak_diyarlar" slug'ı "adventuretime" içeriyor
+  //    ve TMDB EN "adventuretimedistantlands" da "adventuretime" içeriyor
+  if (s === 0) {
+    if (nsc === nec || nsc === ntc)                       s = 75;
+    else if (nec.length > 2 && nsc.indexOf(nec) !== -1)  s = 75;
+    else if (nec.length > 2 && nec.indexOf(nsc) !== -1)  s = 70;
+    else if (ntc.length > 2 && nsc.indexOf(ntc) !== -1)  s = 70;
+  }
+
+  // 3) Kelime örtüşmesi — "Adventure Time Distant Lands" vs slug "adventuretimeuzakdiyarlar"
+  //    "adventure" + "time" ikisi de var → %50+ örtüşme → skor 70
+  if (s === 0) {
+    var overlapEn = wordOverlap(nsc, nec);
+    var overlapTr = wordOverlap(nc,  ntc);
+    if (overlapEn >= 0.5)      s = 70;
+    else if (overlapTr >= 0.5) s = 70;
+    else if (overlapEn >= 0.3) s = 60;
+    else if (overlapTr >= 0.3) s = 60;
+  }
+
   if (s === 0) return 0;
-  if (ny && year) return ny === year ? s + 20 : 5; // yıl varsa kesin ayırt
+  if (ny && year) return ny === year ? s + 20 : 5;
   return s;
 }
 
