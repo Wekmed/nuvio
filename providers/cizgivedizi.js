@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider  (v12)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -182,14 +182,23 @@ function scoreItem(item, titleEn, titleTr, year) {
   var ntc = nt.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
 
   var s = 0;
-  if (nc === nec || nc === ntc)                         s = 80;
-  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
-  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
+  if (nc === nec || nc === ntc)                         s = 90; // Tam eşleşme
+  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ site adı
+  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ site adı
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
 
   if (s === 0) return 0;
-  if (ny && year) return ny === year ? s + 20 : 5; // yıl varsa kesin ayırt
+
+  // Yıl varsa: eşleşme +20, eşleşmeme → 5 (yanlış dizi)
+  if (ny && year) return ny === year ? s + 20 : 5;
+
+  // Yıl yoksa: TMDB yılıyla kısmi ipucu — site slug'unda yıl geçiyor mu?
+  // örn: "ducktales_(2017)" slug → ny=null ama name'de yıl var
+  var nyName = raw.match(/\((19[89]\d|20[0-3]\d)\)/);
+  var nyFromName = nyName ? nyName[1] : null;
+  if (nyFromName && year) return nyFromName === year ? s + 20 : 5;
+
   return s;
 }
 
@@ -201,7 +210,7 @@ function fetchYearFromPage(item, mediaType) {
   var type = mediaType === 'movie' ? 'film' : 'dizi';
   var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug);
   // İlk 60KB'da badge-date-text bulunabilir
-  return getHtml(url, { 'Range': 'bytes=0-61440' })
+  return getHtml(url)
     .then(function(html) {
       var m = html.match(/badge-date-text[^>]*>[^<]*((?:19[89]|20[0-3])\d)/i);
       return m ? m[1] : null;
@@ -420,49 +429,52 @@ function extractStream(url) {
 
 // ── Ana Akış ─────────────────────────────────────────────────
 
-// Dizi ana sayfasından bölüm listesini çek, global no'ya karşılık gelen URL'i bul
+// Dizi ana sayfasından bölüm linklerini HTML parse et
 function fetchEpisodeUrl(item, epGlobalNo) {
-  // item.href örn: /dizi/sd/surekli_dizi/1/guc
-  // Base: /dizi/sd/surekli_dizi
-  var hrefParts = (item.href || '').split('/');
-  // hrefParts: ['','dizi','sd','surekli_dizi','1','guc']
-  var diziBase  = BASE_URL + '/' + hrefParts[1] + '/' + hrefParts[2] + '/' + hrefParts[3];
-  var listUrl   = diziBase + '?ajax=bolumler';
+  // Dizi ana sayfası: /dizi/{id}/{slug}
+  var diziBase = BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug);
+  log('Dizi ana sayfa: ' + diziBase + ' (global bölüm #' + epGlobalNo + ')');
 
-  log('Bölüm listesi: ' + listUrl);
+  return getHtml(diziBase)
+    .then(function(html) {
+      // Bölüm linklerini bul: <a href="/dizi/sd/surekli_dizi/N/slug">
+      var epLinks = [];
+      var re = /href="(\/dizi\/[^"]+\/\d+\/[^"]+)"/gi;
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        var href = m[1];
+        // Aynı dizi mi kontrol et (id eşleşmeli)
+        if (href.indexOf('/' + item.id + '/') !== -1) {
+          epLinks.push(href);
+        }
+      }
 
-  return fetch(listUrl, {
-    headers: Object.assign({}, HEADERS, {
-      'Accept': 'application/json, */*',
-      'X-Requested-With': 'XMLHttpRequest'
+      // Tekrarları kaldır, sıralamayı koru
+      var seen = {}, unique = [];
+      for (var i = 0; i < epLinks.length; i++) {
+        if (!seen[epLinks[i]]) { seen[epLinks[i]] = true; unique.push(epLinks[i]); }
+      }
+
+      log('Bölüm linkleri bulundu: ' + unique.length);
+
+      if (!unique.length) {
+        // Fallback: /-  pattern
+        log('Link bulunamadı, fallback: /-');
+        return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
+             + '/' + epGlobalNo + '/-';
+      }
+
+      // Global no'ya göre seç (1-indexed)
+      var target = unique[epGlobalNo - 1] || unique[unique.length - 1];
+      var epUrl = BASE_URL + target;
+      log('Seçilen bölüm: ' + epUrl);
+      return epUrl;
     })
-  })
-  .then(function(r) { return r.ok ? r.json() : null; })
-  .then(function(episodes) {
-    if (!Array.isArray(episodes) || !episodes.length) {
-      log('Bölüm listesi boş, fallback URL deneniyor');
-      // Fallback: eski /-  pattern
+    .catch(function(e) {
+      log('Ana sayfa fetch hatası: ' + e.message + ' → fallback /-');
       return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
            + '/' + epGlobalNo + '/-';
-    }
-    log('Bölüm listesi: ' + episodes.length + ' bölüm');
-    // Global no'ya göre bölümü bul (1-indexed)
-    var ep = episodes[epGlobalNo - 1];
-    if (!ep) {
-      log('Global #' + epGlobalNo + ' bulunamadı, son bölüm deneniyor');
-      ep = episodes[episodes.length - 1];
-    }
-    var epUrl = ep.href
-      ? (ep.href.startsWith('http') ? ep.href : BASE_URL + ep.href)
-      : (BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug) + '/' + epGlobalNo + '/-');
-    log('Bölüm URL (liste): ' + epUrl);
-    return epUrl;
-  })
-  .catch(function() {
-    // AJAX başarısız → item.href base + global no
-    return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
-         + '/' + epGlobalNo + '/-';
-  });
+    });
 }
 
 function buildEpUrl(item, mediaType, epGlobalNo) {
