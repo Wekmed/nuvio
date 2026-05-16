@@ -144,25 +144,25 @@
       "limited": false,
       "disabledPlatforms": []
     },
-  
-    {
+  {
       "id": "cizgivedizi",
-      "name": "CizgiveDizi",
-      "description": "Türkçe çizgi film ve animasyon dizileri. cizgivedizi.com üzerinden 1000+ içerikle full HD stream sağlar.",
-      "version": "1.0.0",
-      "author": "nuvio: Wekmed",
+      "name": "ÇizgiVeDizi",
+      "description": "Türkçe çizgi film, animasyon dizi ve filmler. cizgivedizi.com üzerinden Sibnet/MailRu/MP4Upload stream sağlar.",
+      "version": "1.1.0",
+      "author": "Wekmed",
       "supportedTypes": [
-        "movie",
-        "tv"
+        "tv",
+        "movie"
       ],
       "filename": "providers/cizgivedizi.js",
       "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=cizgivedizi.com&sz=64",
       "contentLanguage": [
         "tr"
       ],
       "limited": false,
       "disabledPlatforms": []
-    },
+  },
     {
       "id": "sinewix",
       "name": "SineWix",
