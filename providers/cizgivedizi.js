@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider 
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -12,7 +12,7 @@ var LOG_TAG     = '[CizgiVeDizi]';
 var GITHUB_DIZI_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_liste.txt';
 var GITHUB_FILM_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_filmler.txt';
 
-// Cache — uygulama ömrü boyunca tek seferlik fetch
+// Runtime cache (aynı JS context içinde tekrar çağrılırsa)
 var _diziList = null;
 var _filmList = null;
 
@@ -133,35 +133,45 @@ function buildQueries(titleTr, titleEn) {
   return out;
 }
 
-// ── TXT Listesi Yükle (cache'li) ─────────────────────────────
-
-/**
- * TXT formatı:
- *    1. İçerik Adı
- *       https://www.cizgivedizi.com/dizi/id/slug
- */
+// ── TXT Listesi Yükle ────────────────────────────────────────
+//
+// Öncelik:
+//   1. SCRAPER_SETTINGS.diziList / filmList  →  Nuvio Kotlin tarafı inject eder
+//      (async Promise zinciri yok, QuickJS job-queue sorunu yok)
+//   2. Runtime cache  →  aynı context içinde 2. çağrı
+//   3. fetch() fallback  →  eski test ekranı / Nuvio inject etmezse
+//
 function loadList(mediaType) {
-  if (mediaType === 'movie') {
-    if (_filmList) return Promise.resolve(_filmList);
-    return fetch(GITHUB_FILM_TXT)
-      .then(function(r) { return r.ok ? r.text() : ''; })
-      .then(function(txt) {
-        _filmList = parseTxt(txt, 'film');
-        log('Film listesi yüklendi: ' + _filmList.length + ' kayıt');
-        return _filmList;
-      })
-      .catch(function() { _filmList = []; return []; });
-  } else {
-    if (_diziList) return Promise.resolve(_diziList);
-    return fetch(GITHUB_DIZI_TXT)
-      .then(function(r) { return r.ok ? r.text() : ''; })
-      .then(function(txt) {
-        _diziList = parseTxt(txt, 'dizi');
-        log('Dizi listesi yüklendi: ' + _diziList.length + ' kayıt');
-        return _diziList;
-      })
-      .catch(function() { _diziList = []; return []; });
+  var isFilm = (mediaType === 'movie');
+  var listKey = isFilm ? 'filmList' : 'diziList';
+
+  // 1) Nuvio inject ettiyse senkron kullan
+  var injected = globalThis.SCRAPER_SETTINGS && globalThis.SCRAPER_SETTINGS[listKey];
+  if (Array.isArray(injected) && injected.length > 0) {
+    log((isFilm ? 'Film' : 'Dizi') + ' listesi SCRAPER_SETTINGS: ' + injected.length + ' kayıt');
+    if (isFilm) _filmList = injected; else _diziList = injected;
+    return Promise.resolve(injected);
   }
+
+  // 2) Runtime cache
+  if (isFilm && _filmList) return Promise.resolve(_filmList);
+  if (!isFilm && _diziList) return Promise.resolve(_diziList);
+
+  // 3) fetch fallback (eski test ekranı)
+  var url  = isFilm ? GITHUB_FILM_TXT : GITHUB_DIZI_TXT;
+  var type = isFilm ? 'film' : 'dizi';
+  return fetch(url)
+    .then(function(r) { return r.ok ? r.text() : ''; })
+    .then(function(txt) {
+      var list = parseTxt(txt, type);
+      log((isFilm ? 'Film' : 'Dizi') + ' listesi fetch: ' + list.length + ' kayıt');
+      if (isFilm) _filmList = list; else _diziList = list;
+      return list;
+    })
+    .catch(function() {
+      if (isFilm) { _filmList = []; return []; }
+      _diziList = []; return [];
+    });
 }
 
 /**
