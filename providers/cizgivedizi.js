@@ -9,8 +9,8 @@ var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
 
 // GitHub raw TXT listeleri — kendi repo'nuzun raw linklerini buraya yazın
-var GITHUB_DIZI_TXT = 'https://github.com/Wekmed/nuvio/blob/main/providers/cizgivedizi_liste.txt';
-var GITHUB_FILM_TXT = 'https://github.com/Wekmed/nuvio/blob/main/providers/cizgivedizi_filmler.txt';
+var GITHUB_DIZI_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_liste.txt';
+var GITHUB_FILM_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_filmler.txt';
 
 // Cache — uygulama ömrü boyunca tek seferlik fetch
 var _diziList = null;
