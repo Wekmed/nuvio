@@ -1,6 +1,5 @@
 /**
  * CizgiVeDizi — Nuvio Provider  (v11)
- * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
 var BASE_URL    = 'https://www.cizgivedizi.com';
@@ -439,11 +438,15 @@ function isVideoUrl(url) {
 }
 
 function extractSibnet(url) {
-  // Sibnet shell.php URL'sini direkt stream olarak dön.
-  // İçine girip MP4 aramak Nuvio sandbox'ta çalışmıyor.
-  // Nuvio player Sibnet iframe'i zaten oynatabiliyor.
   var full = toAbs(url);
-  return Promise.resolve({ url: full, type: 'iframe', headers: { 'Referer': BASE_URL + '/' } });
+  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/' })
+    .then(function(html) {
+      var m = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)["']/i)
+           || html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4)["']/i);
+      if (!m) return null;
+      var mp4 = m[1].indexOf('http') === 0 ? m[1] : SIBNET_HOST + m[1];
+      return { url: mp4, type: 'direct', headers: { 'Referer': full } };
+    }).catch(function() { return null; });
 }
 
 function extractVidmoly(url) {
@@ -502,6 +505,93 @@ function buildEpUrl(item, mediaType, epGlobalNo) {
        + '/' + epGlobalNo + '/-';
 }
 
+
+// ── Yardımcı: iframe#playerFrame src'yi al (sayfanın başında ~9KB) ─────
+function parsePlayerFrame(html) {
+  var m = html.match(/<iframe[^>]+id=["']playerFrame["'][^>]+src=["']([^"']+)["']/i)
+        || html.match(/<iframe[^>]+src=["']([^"']+)["'][^>]+id=["']playerFrame["']/i);
+  if (!m) return null;
+  var src = m[1];
+  // MHT'de "cid:..." gelir, gerçek sayfada URL gelir
+  if (src.indexOf('cid:') === 0 || src.indexOf('about:') === 0) return null;
+  return toAbs(src);
+}
+
+// ── Yardımcı: src-btn sayısını say ─────────────────────────────────────
+function parseKaynakCount(html) {
+  var matches = html.match(/data-kaynak=["']\d+["']/gi) || [];
+  return matches.length;
+}
+
+// ── Ana yol: ?kaynak=N ile her kaynak için iframe src al ───────────────
+function fetchStreamsByKaynak(epUrl, kaynak0Url, count, srcNames, info) {
+  // kaynak=0 zaten var, diğerlerini fetch et
+  var promises = [];
+
+  // kaynak=0: zaten elimizde
+  promises.push(
+    extractStream(kaynak0Url).then(function(stream) {
+      if (!stream) return null;
+      var srcName = srcNames[0] || 'Kaynak 0';
+      return buildStreamObj(stream, srcName, info);
+    })
+  );
+
+  // kaynak=1..N-1: ?kaynak=N ile fetch
+  for (var n = 1; n < count; n++) {
+    (function(kaynak) {
+      var url = epUrl + (epUrl.indexOf('?') !== -1 ? '&' : '?') + 'kaynak=' + kaynak;
+      promises.push(
+        getHtml(url).then(function(html2) {
+          var embedUrl = parsePlayerFrame(html2);
+          if (!embedUrl) return null;
+          log('kaynak=' + kaynak + ' embed: ' + embedUrl.slice(0, 60));
+          return extractStream(embedUrl).then(function(stream) {
+            if (!stream) return null;
+            var srcName = srcNames[kaynak] || ('Kaynak ' + kaynak);
+            return buildStreamObj(stream, srcName, info);
+          });
+        }).catch(function() { return null; })
+      );
+    })(n);
+  }
+
+  return Promise.all(promises).then(function(all) {
+    var filtered = all.filter(Boolean);
+    log('Stream sayısı: ' + filtered.length);
+    return filtered;
+  });
+}
+
+function buildStreamObj(stream, srcName, info) {
+  return {
+    name:    info.title,
+    title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
+    url:     stream.url,
+    quality: 'Auto',
+    type:    stream.type,
+    headers: stream.headers || {}
+  };
+}
+
+// ── Fallback: __embeds_b64'ten stream ──────────────────────────────────
+function fetchStreamsFromEmbeds(embeds, srcNames, epUrl, info) {
+  log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
+  return Promise.all(
+    embeds.map(function(embedUrl, idx) {
+      return extractStream(embedUrl).then(function(stream) {
+        if (!stream) return null;
+        var srcName = srcNames[idx] || ('Kaynak ' + idx);
+        return buildStreamObj(stream, srcName, info);
+      });
+    })
+  ).then(function(all) {
+    var filtered = all.filter(Boolean);
+    log('Stream sayısı: ' + filtered.length);
+    return filtered;
+  });
+}
+
 function getStreams(tmdbId, mediaType, season, episode) {
   log('START tmdbId=' + tmdbId + ' type=' + mediaType +
       (mediaType === 'tv' ? ' S' + season + 'E' + episode : ''));
@@ -526,36 +616,28 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var epUrl = buildEpUrl(item, mediaType, epGlobal);
         log('Bölüm URL: ' + epUrl);
 
-        return getHtmlFull(epUrl).then(function(html) {
-          var embeds   = parseEmbeds(html);
+        return getHtml(epUrl).then(function(html) {
+          // Nuvio 256KB ile keser — __embeds_b64 sayfanın sonunda (~450KB) olduğu için gelmiyor.
+          // Çözüm: playerFrame iframe src sayfanın başında (9KB) → her zaman gelir.
+          // ?kaynak=N ile her kaynak için ayrı fetch → iframe src al.
           var srcNames = parseSourceNames(html);
+          var kaynak0  = parsePlayerFrame(html);
+          var kaynakCount = parseKaynakCount(html);
 
-          if (!embeds.length) {
-            log('Embed bulunamadı');
-            return [];
+          log('kaynak sayısı: ' + kaynakCount + ', kaynak0: ' + (kaynak0 || 'yok'));
+
+          if (kaynakCount === 0 || !kaynak0) {
+            // Fallback: __embeds_b64 dene (küçük sayfalarda çalışır)
+            var embeds = parseEmbeds(html);
+            if (!embeds.length) {
+              log('Embed bulunamadı');
+              return [];
+            }
+            return fetchStreamsFromEmbeds(embeds, srcNames, epUrl, info);
           }
-          log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
 
-          return Promise.all(
-            embeds.map(function(embedUrl, idx) {
-              return extractStream(embedUrl).then(function(stream) {
-                if (!stream) return null;
-                var srcName = srcNames[idx] || ('Kaynak ' + idx);
-                return {
-                  name:    info.title,
-                  title:   '⌜ ÇİZGİVEDİZİ ⌟ | ' + srcName + ' | Auto',
-                  url:     stream.url,
-                  quality: 'Auto',
-                  type:    stream.type,
-                  headers: stream.headers || {}
-                };
-              });
-            })
-          ).then(function(all) {
-            var filtered = all.filter(Boolean);
-            log('Stream sayısı: ' + filtered.length);
-            return filtered;
-          });
+          // Ana yol: ?kaynak=N ile her kaynak için ayrı fetch
+          return fetchStreamsByKaynak(epUrl, kaynak0, kaynakCount, srcNames, info);
         });
       });
     })
