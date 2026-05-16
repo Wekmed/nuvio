@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v12)
+ * CizgiVeDizi — Nuvio Provider  (v11)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -151,7 +151,8 @@ function buildQueries(titleTr, titleEn) {
 
 function searchSite(query, mediaType) {
   var anchor = mediaType === 'movie' ? SEARCH_FILM : SEARCH_DIZI;
-  var url    = anchor + '?ajax=search&q=' + encodeURIComponent(query);
+  // Türkçe karakterleri ASCII'ye çevir — site non-ASCII encode'u handle edemiyor
+  var url    = anchor + '?ajax=search&q=' + encodeURIComponent(norm(query));
   return fetch(url, {
     headers: Object.assign({}, HEADERS, {
       'Accept':           'application/json, */*',
@@ -419,6 +420,51 @@ function extractStream(url) {
 
 // ── Ana Akış ─────────────────────────────────────────────────
 
+// Dizi ana sayfasından bölüm listesini çek, global no'ya karşılık gelen URL'i bul
+function fetchEpisodeUrl(item, epGlobalNo) {
+  // item.href örn: /dizi/sd/surekli_dizi/1/guc
+  // Base: /dizi/sd/surekli_dizi
+  var hrefParts = (item.href || '').split('/');
+  // hrefParts: ['','dizi','sd','surekli_dizi','1','guc']
+  var diziBase  = BASE_URL + '/' + hrefParts[1] + '/' + hrefParts[2] + '/' + hrefParts[3];
+  var listUrl   = diziBase + '?ajax=bolumler';
+
+  log('Bölüm listesi: ' + listUrl);
+
+  return fetch(listUrl, {
+    headers: Object.assign({}, HEADERS, {
+      'Accept': 'application/json, */*',
+      'X-Requested-With': 'XMLHttpRequest'
+    })
+  })
+  .then(function(r) { return r.ok ? r.json() : null; })
+  .then(function(episodes) {
+    if (!Array.isArray(episodes) || !episodes.length) {
+      log('Bölüm listesi boş, fallback URL deneniyor');
+      // Fallback: eski /-  pattern
+      return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
+           + '/' + epGlobalNo + '/-';
+    }
+    log('Bölüm listesi: ' + episodes.length + ' bölüm');
+    // Global no'ya göre bölümü bul (1-indexed)
+    var ep = episodes[epGlobalNo - 1];
+    if (!ep) {
+      log('Global #' + epGlobalNo + ' bulunamadı, son bölüm deneniyor');
+      ep = episodes[episodes.length - 1];
+    }
+    var epUrl = ep.href
+      ? (ep.href.startsWith('http') ? ep.href : BASE_URL + ep.href)
+      : (BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug) + '/' + epGlobalNo + '/-');
+    log('Bölüm URL (liste): ' + epUrl);
+    return epUrl;
+  })
+  .catch(function() {
+    // AJAX başarısız → item.href base + global no
+    return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
+         + '/' + epGlobalNo + '/-';
+  });
+}
+
 function buildEpUrl(item, mediaType, epGlobalNo) {
   if (mediaType === 'movie')
     return BASE_URL + '/film/' + encPath(item.id) + '/' + encPath(item.slug);
@@ -447,10 +493,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
-        var epUrl = buildEpUrl(item, mediaType, epGlobal);
-        log('Bölüm URL: ' + epUrl);
+        var epUrlPromise = mediaType === 'tv'
+          ? fetchEpisodeUrl(item, epGlobal)
+          : Promise.resolve(buildEpUrl(item, mediaType, epGlobal));
 
-        return getHtml(epUrl).then(function(html) {
+        return epUrlPromise.then(function(epUrl) {
+        log('Bölüm URL: ' + epUrl);
+        return getHtml(epUrl);
+        }).then(function(html) {
           var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
