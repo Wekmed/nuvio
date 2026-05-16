@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v12)
+ * CizgiVeDizi — Nuvio Provider  (v11)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -51,35 +51,15 @@ function getHtml(url, extra) {
 // ── Base64 decode (Hermes uyumlu) ────────────────────────────
 
 function b64decode(b64) {
-  // Buffer: Node.js ortamı
+  // Buffer: RN'de her zaman var, atob'dan daha güvenli
   if (typeof Buffer !== 'undefined') {
     try {
       return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
     } catch(e) {}
   }
-  // QuickJS / tarayıcı: atob latin1 döndürür, UTF-8 decode gerekli
+  // atob: RN 0.73+ ve tarayıcı
   if (typeof atob !== 'undefined') {
-    try {
-      var raw = atob(b64);
-      // UTF-8 byte dizisini stringe çevir
-      var bytes = new Uint8Array(raw.length);
-      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-      var decoded;
-      if (typeof TextDecoder !== 'undefined') {
-        decoded = new TextDecoder('utf-8').decode(bytes);
-      } else {
-        // Manuel UTF-8 decode
-        decoded = '';
-        var i2 = 0;
-        while (i2 < bytes.length) {
-          var b = bytes[i2];
-          if (b < 0x80) { decoded += String.fromCharCode(b); i2++; }
-          else if (b < 0xE0) { decoded += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i2+1] & 0x3F)); i2 += 2; }
-          else { decoded += String.fromCharCode(((b & 0x0F) << 12) | ((bytes[i2+1] & 0x3F) << 6) | (bytes[i2+2] & 0x3F)); i2 += 3; }
-        }
-      }
-      return JSON.parse(decoded);
-    } catch(e) {}
+    try { return JSON.parse(atob(b64)); } catch(e) {}
   }
   return null;
 }
@@ -99,8 +79,6 @@ function encPath(s) {
 // ── 1. TMDB ──────────────────────────────────────────────────
 
 function fetchTmdbInfo(tmdbId, mediaType) {
-  // Nuvio bazen "tmdb:12345" formatında gönderiyor
-  tmdbId = String(tmdbId).replace(/^tmdb[:/]/i, '').split('/')[0].split(':')[0].trim();
   var ep  = mediaType === 'tv' ? 'tv' : 'movie';
   var url = 'https://api.themoviedb.org/3/' + ep + '/' + tmdbId
           + '?api_key=' + TMDB_KEY + '&language=tr-TR';
@@ -151,8 +129,7 @@ function buildQueries(titleTr, titleEn) {
 
 function searchSite(query, mediaType) {
   var anchor = mediaType === 'movie' ? SEARCH_FILM : SEARCH_DIZI;
-  // Türkçe karakterleri ASCII'ye çevir — site non-ASCII encode'u handle edemiyor
-  var url    = anchor + '?ajax=search&q=' + encodeURIComponent(norm(query));
+  var url    = anchor + '?ajax=search&q=' + encodeURIComponent(query);
   return fetch(url, {
     headers: Object.assign({}, HEADERS, {
       'Accept':           'application/json, */*',
@@ -182,23 +159,14 @@ function scoreItem(item, titleEn, titleTr, year) {
   var ntc = nt.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
 
   var s = 0;
-  if (nc === nec || nc === ntc)                         s = 90; // Tam eşleşme
-  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ site adı
-  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ site adı
+  if (nc === nec || nc === ntc)                         s = 80;
+  else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
+  else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
 
   if (s === 0) return 0;
-
-  // Yıl varsa: eşleşme +20, eşleşmeme → 5 (yanlış dizi)
-  if (ny && year) return ny === year ? s + 20 : 5;
-
-  // Yıl yoksa: TMDB yılıyla kısmi ipucu — site slug'unda yıl geçiyor mu?
-  // örn: "ducktales_(2017)" slug → ny=null ama name'de yıl var
-  var nyName = raw.match(/\((19[89]\d|20[0-3]\d)\)/);
-  var nyFromName = nyName ? nyName[1] : null;
-  if (nyFromName && year) return nyFromName === year ? s + 20 : 5;
-
+  if (ny && year) return ny === year ? s + 20 : 5; // yıl varsa kesin ayırt
   return s;
 }
 
@@ -210,7 +178,7 @@ function fetchYearFromPage(item, mediaType) {
   var type = mediaType === 'movie' ? 'film' : 'dizi';
   var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug);
   // İlk 60KB'da badge-date-text bulunabilir
-  return getHtml(url)
+  return getHtml(url, { 'Range': 'bytes=0-61440' })
     .then(function(html) {
       var m = html.match(/badge-date-text[^>]*>[^<]*((?:19[89]|20[0-3])\d)/i);
       return m ? m[1] : null;
@@ -429,54 +397,6 @@ function extractStream(url) {
 
 // ── Ana Akış ─────────────────────────────────────────────────
 
-// Dizi ana sayfasından bölüm linklerini HTML parse et
-function fetchEpisodeUrl(item, epGlobalNo) {
-  // Dizi ana sayfası: /dizi/{id}/{slug}
-  var diziBase = BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug);
-  log('Dizi ana sayfa: ' + diziBase + ' (global bölüm #' + epGlobalNo + ')');
-
-  return getHtml(diziBase)
-    .then(function(html) {
-      // Bölüm linklerini bul: <a href="/dizi/sd/surekli_dizi/N/slug">
-      var epLinks = [];
-      var re = /href="(\/dizi\/[^"]+\/\d+\/[^"]+)"/gi;
-      var m;
-      while ((m = re.exec(html)) !== null) {
-        var href = m[1];
-        // Aynı dizi mi kontrol et (id eşleşmeli)
-        if (href.indexOf('/' + item.id + '/') !== -1) {
-          epLinks.push(href);
-        }
-      }
-
-      // Tekrarları kaldır, sıralamayı koru
-      var seen = {}, unique = [];
-      for (var i = 0; i < epLinks.length; i++) {
-        if (!seen[epLinks[i]]) { seen[epLinks[i]] = true; unique.push(epLinks[i]); }
-      }
-
-      log('Bölüm linkleri bulundu: ' + unique.length);
-
-      if (!unique.length) {
-        // Fallback: /-  pattern
-        log('Link bulunamadı, fallback: /-');
-        return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
-             + '/' + epGlobalNo + '/-';
-      }
-
-      // Global no'ya göre seç (1-indexed)
-      var target = unique[epGlobalNo - 1] || unique[unique.length - 1];
-      var epUrl = BASE_URL + target;
-      log('Seçilen bölüm: ' + epUrl);
-      return epUrl;
-    })
-    .catch(function(e) {
-      log('Ana sayfa fetch hatası: ' + e.message + ' → fallback /-');
-      return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
-           + '/' + epGlobalNo + '/-';
-    });
-}
-
 function buildEpUrl(item, mediaType, epGlobalNo) {
   if (mediaType === 'movie')
     return BASE_URL + '/film/' + encPath(item.id) + '/' + encPath(item.slug);
@@ -505,14 +425,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
-        var epUrlPromise = mediaType === 'tv'
-          ? fetchEpisodeUrl(item, epGlobal)
-          : Promise.resolve(buildEpUrl(item, mediaType, epGlobal));
-
-        return epUrlPromise.then(function(epUrl) {
+        var epUrl = buildEpUrl(item, mediaType, epGlobal);
         log('Bölüm URL: ' + epUrl);
-        return getHtml(epUrl);
-        }).then(function(html) {
+
+        return getHtml(epUrl).then(function(html) {
           var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
