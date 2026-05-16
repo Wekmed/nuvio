@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider 
+ * CizgiVeDizi — Nuvio Provider  (v11)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -8,13 +8,9 @@ var TMDB_KEY    = '500330721680edb6d5f7f12ba7cd9023';
 var SIBNET_HOST = 'https://video.sibnet.ru';
 var LOG_TAG     = '[CizgiVeDizi]';
 
-// GitHub raw TXT listeleri — kendi repo'nuzun raw linklerini buraya yazın
-var GITHUB_DIZI_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_liste.txt';
-var GITHUB_FILM_TXT = 'https://raw.githubusercontent.com/Wekmed/nuvio/refs/heads/main/providers/cizgivedizi_filmler.txt';
-
-// Runtime cache (aynı JS context içinde tekrar çağrılırsa)
-var _diziList = null;
-var _filmList = null;
+// Arama için sabit anchor (/_/ path 404 veriyor)
+var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
+var SEARCH_FILM = BASE_URL + '/film/_/_';
 
 var HEADERS = {
   'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
@@ -121,171 +117,56 @@ function buildQueries(titleTr, titleEn) {
 
   add(titleTr);
   add(titleEn);
-  if (enW.length > 0) add(enW[enW.length - 1]);            // EN son kelime: "Gumball"
-  if (enW.length > 1) add(enW[0]);                          // EN ilk kelime
-  if (enW.length >= 2) add(enW[0] + ' ' + enW[1]);         // EN ilk 2: "Adventure Time"
-  if (enW.length >= 3) add(enW[0] + ' ' + enW[1] + ' ' + enW[2]); // EN ilk 3
-  if (trW.length > 0) add(trW[trW.length - 1]);             // TR son kelime
+  if (enW.length > 0) add(enW[enW.length - 1]);       // EN son kelime: "Gumball"
+  if (enW.length > 1) add(enW[0]);                     // EN ilk kelime
+  if (enW.length > 2) add(enW[0] + ' ' + enW[1]);
+  if (trW.length > 0) add(trW[trW.length - 1]);        // TR son kelime
   if (trW.length > 1) add(trW[0]);
-  if (trW.length >= 2) add(trW[0] + ' ' + trW[1]);         // TR ilk 2
-  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]);
+  for (var i = 0; i < trW.length - 1; i++) add(trW[i] + ' ' + trW[i+1]); // "Muhteşem Tuhaf"
   for (var j = 1; j < enW.length - 1; j++) add(enW[j] + ' ' + enW[j+1]);
   return out;
 }
 
-// ── TXT Listesi Yükle ────────────────────────────────────────
-//
-// Öncelik:
-//   1. SCRAPER_SETTINGS.diziList / filmList  →  Nuvio Kotlin tarafı inject eder
-//      (async Promise zinciri yok, QuickJS job-queue sorunu yok)
-//   2. Runtime cache  →  aynı context içinde 2. çağrı
-//   3. fetch() fallback  →  eski test ekranı / Nuvio inject etmezse
-//
-function loadList(mediaType) {
-  var isFilm = (mediaType === 'movie');
-  var listKey = isFilm ? 'filmList' : 'diziList';
-
-  // 1) Nuvio inject ettiyse senkron kullan
-  var injected = globalThis.SCRAPER_SETTINGS && globalThis.SCRAPER_SETTINGS[listKey];
-  if (Array.isArray(injected) && injected.length > 0) {
-    log((isFilm ? 'Film' : 'Dizi') + ' listesi SCRAPER_SETTINGS: ' + injected.length + ' kayıt');
-    if (isFilm) _filmList = injected; else _diziList = injected;
-    return Promise.resolve(injected);
-  }
-
-  // 2) Runtime cache
-  if (isFilm && _filmList) return Promise.resolve(_filmList);
-  if (!isFilm && _diziList) return Promise.resolve(_diziList);
-
-  // 3) fetch fallback (eski test ekranı)
-  var url  = isFilm ? GITHUB_FILM_TXT : GITHUB_DIZI_TXT;
-  var type = isFilm ? 'film' : 'dizi';
-  return fetch(url)
-    .then(function(r) { return r.ok ? r.text() : ''; })
-    .then(function(txt) {
-      var list = parseTxt(txt, type);
-      log((isFilm ? 'Film' : 'Dizi') + ' listesi fetch: ' + list.length + ' kayıt');
-      if (isFilm) _filmList = list; else _diziList = list;
-      return list;
-    })
-    .catch(function() {
-      if (isFilm) { _filmList = []; return []; }
-      _diziList = []; return [];
-    });
-}
-
-/**
- * TXT'yi parse et → [{name, id, slug}] dizisi döner
- * URL yapısı: /dizi/ID/SLUG  veya  /film/ID/SLUG
- */
-function parseTxt(txt, type) {
-  var lines   = txt.split('\n');
-  var results = [];
-  var nameRe  = /^\s{0,4}\d+\.\s+(.+)$/;
-  var urlRe   = new RegExp('cizgivedizi\\.com\\/' + type + '\\/([^\\/]+)\\/([^\\s\\/]+)');
-  var i = 0;
-  while (i < lines.length) {
-    var nm = lines[i].match(nameRe);
-    if (nm && i + 1 < lines.length) {
-      var um = lines[i + 1].match(urlRe);
-      if (um) {
-        results.push({
-          name: nm[1].trim(),
-          id:   decodeURIComponent(um[1]),
-          slug: decodeURIComponent(um[2])
-        });
-        i += 2;
-        continue;
-      }
-    }
-    i++;
-  }
-  return results;
-}
-
-// ── TXT'den Arama ────────────────────────────────────────────
-
 function searchSite(query, mediaType) {
-  return loadList(mediaType).then(function(list) {
-    var qn = norm(query);
-    var hits = list.filter(function(item) {
-      var n  = norm(item.name);
-      var ns = norm(item.slug);  // slug EN ismi taşır: "adventure_time_uzak_diyarlar"
-      return n.indexOf(qn) !== -1 || qn.indexOf(n) !== -1
-          || ns.indexOf(qn) !== -1 || qn.indexOf(ns) !== -1;
-    });
-    log('TXT arama "' + query + '" → ' + hits.length + ' sonuç');
-    return hits;
-  });
+  var anchor = mediaType === 'movie' ? SEARCH_FILM : SEARCH_DIZI;
+  var url    = anchor + '?ajax=search&q=' + encodeURIComponent(query);
+  return fetch(url, {
+    headers: Object.assign({}, HEADERS, {
+      'Accept':           'application/json, */*',
+      'X-Requested-With': 'XMLHttpRequest'
+    })
+  })
+    .then(function(r) { return r.ok ? r.json() : []; })
+    .catch(function() { return []; });
 }
 
 /**
  * Skorlama:
- * - Slug da karşılaştırılır (EN isim slug içinde geçiyor olabilir)
- * - name içinde yıl varsa: TMDB yılı ile karşılaştır → net seçim
+ * - name içinde yıl varsa (ducktales (2017)): TMDB yılı ile karşılaştır → net seçim
  * - Yıl yoksa: isim benzerliği (tam, kapsama, kısmi)
- *
- * Örnek: site adı "Adventure Time Uzak Diyarlar", slug "adventure_time_uzak_diyarlar"
- *        TMDB EN: "Adventure Time Distant Lands"
- *        → slug norm "adventuretimeuzakdiyarlar" ⊄ "adventuretimedistantlands"
- *        → ama her iki slug da "adventuretime" ile başlıyor → wordOverlap ile yakalanır
  */
-function wordOverlap(a, b) {
-  // İki normalize string arasındaki ortak 4+ karakter kelime parçası oranı
-  var wa = a.match(/[a-z0-9]{4,}/g) || [];
-  var wb = b.match(/[a-z0-9]{4,}/g) || [];
-  if (!wa.length || !wb.length) return 0;
-  var matches = wa.filter(function(w) { return wb.indexOf(w) !== -1; });
-  return matches.length / Math.max(wa.length, wb.length);
-}
-
 function scoreItem(item, titleEn, titleTr, year) {
-  var raw  = item.name || '';
-  var slug = norm(item.slug || '');
-  var n    = norm(raw);
-  var ne   = norm(titleEn);
-  var nt   = norm(titleTr);
+  var raw = item.name || '';
+  var n   = norm(raw);
+  var ne  = norm(titleEn);
+  var nt  = norm(titleTr);
 
   var nyM = raw.match(/\b(19[89]\d|20[0-3]\d)\b/);
   var ny  = nyM ? nyM[1] : null;
 
   var nc  = n.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
-  var nsc = slug.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
   var nec = ne.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
   var ntc = nt.replace(/\d{4}/g,'').replace(/[^a-z0-9]/g,'');
 
   var s = 0;
-
-  // 1) İsim tam eşleşme veya kapsama (mevcut mantık)
   if (nc === nec || nc === ntc)                         s = 80;
   else if (nec.length > 2 && nec.indexOf(nc) !== -1)   s = 80; // EN ⊃ name
   else if (ntc.length > 2 && ntc.indexOf(nc) !== -1)   s = 75; // TR ⊃ name
   else if (nc.length > 4  && nc.indexOf(nec) !== -1)   s = 70;
   else if (nc.length > 4  && nc.indexOf(ntc) !== -1)   s = 70;
 
-  // 2) Slug üzerinden EN eşleşme (TR çeviri farkını atlar)
-  //    "adventure_time_uzak_diyarlar" slug'ı "adventuretime" içeriyor
-  //    ve TMDB EN "adventuretimedistantlands" da "adventuretime" içeriyor
-  if (s === 0) {
-    if (nsc === nec || nsc === ntc)                       s = 75;
-    else if (nec.length > 2 && nsc.indexOf(nec) !== -1)  s = 75;
-    else if (nec.length > 2 && nec.indexOf(nsc) !== -1)  s = 70;
-    else if (ntc.length > 2 && nsc.indexOf(ntc) !== -1)  s = 70;
-  }
-
-  // 3) Kelime örtüşmesi — "Adventure Time Distant Lands" vs slug "adventuretimeuzakdiyarlar"
-  //    "adventure" + "time" ikisi de var → %50+ örtüşme → skor 70
-  if (s === 0) {
-    var overlapEn = wordOverlap(nsc, nec);
-    var overlapTr = wordOverlap(nc,  ntc);
-    if (overlapEn >= 0.5)      s = 70;
-    else if (overlapTr >= 0.5) s = 70;
-    else if (overlapEn >= 0.3) s = 60;
-    else if (overlapTr >= 0.3) s = 60;
-  }
-
   if (s === 0) return 0;
-  if (ny && year) return ny === year ? s + 20 : 5;
+  if (ny && year) return ny === year ? s + 20 : 5; // yıl varsa kesin ayırt
   return s;
 }
 
@@ -309,63 +190,60 @@ function findContent(info, mediaType) {
   var queries = buildQueries(info.titleTr, info.titleEn);
   log('Sorgular: ' + JSON.stringify(queries.slice(0, 5)) + (queries.length > 5 ? '...' : ''));
 
-  // TXT listesi bir kez yüklensin, sonra tüm sorgular üzerinde çalışsın
-  return loadList(mediaType).then(function(list) {
-    return queries.reduce(function(chain, query) {
-      return chain.then(function(found) {
-        if (found) return found;
-        return searchSite(query, mediaType).then(function(results) {
-          if (!results.length) {
-            log('Sorgu "' + query + '" → 0 sonuç');
-            return null;
+  return queries.reduce(function(chain, query) {
+    return chain.then(function(found) {
+      if (found) return found;
+      return searchSite(query, mediaType).then(function(results) {
+        if (!results.length) {
+          log('Sorgu "' + query + '" → 0 sonuç');
+          return null;
+        }
+        log('Sorgu "' + query + '" → ' + results.length + ' sonuç: [' +
+            results.map(function(r) { return r.id; }).join(', ') + ']');
+
+        var candidates = results
+          .map(function(item) {
+            return { item: item, score: scoreItem(item, info.titleEn, info.titleTr, info.year) };
+          })
+          .filter(function(c) { return c.score >= 70; })
+          .sort(function(a, b) { return b.score - a.score; });
+
+        if (!candidates.length) {
+          log('Hiç aday kalmadı (min score 70)');
+          return null;
+        }
+
+        log('Adaylar: ' + candidates.map(function(c) {
+          return c.item.id + '(' + c.score + ')';
+        }).join(', '));
+
+        // Net fark varsa direkt al
+        if (candidates.length === 1 || candidates[0].score - candidates[1].score >= 10) {
+          log('Seçildi: ' + candidates[0].item.id + ' score=' + candidates[0].score);
+          return candidates[0].item;
+        }
+
+        // Tie: yıl ile ayırt et
+        log('Tie durumu — yıl fetch ediliyor');
+        return Promise.all(
+          candidates.slice(0, 3).map(function(c) {
+            return fetchYearFromPage(c.item, mediaType).then(function(yr) {
+              log('  ' + c.item.id + ' yıl=' + (yr || '?'));
+              return { item: c.item, year: yr, score: c.score };
+            });
+          })
+        ).then(function(withYears) {
+          var exact = withYears.find(function(c) { return c.year === info.year; });
+          if (exact) {
+            log('Yıl eşleşti: ' + exact.item.id);
+            return exact.item;
           }
-          log('Sorgu "' + query + '" → ' + results.length + ' sonuç: [' +
-              results.map(function(r) { return r.id; }).join(', ') + ']');
-
-          var candidates = results
-            .map(function(item) {
-              return { item: item, score: scoreItem(item, info.titleEn, info.titleTr, info.year) };
-            })
-            .filter(function(c) { return c.score >= 70; })
-            .sort(function(a, b) { return b.score - a.score; });
-
-          if (!candidates.length) {
-            log('Hiç aday kalmadı (min score 70)');
-            return null;
-          }
-
-          log('Adaylar: ' + candidates.map(function(c) {
-            return c.item.id + '(' + c.score + ')';
-          }).join(', '));
-
-          // Net fark varsa direkt al
-          if (candidates.length === 1 || candidates[0].score - candidates[1].score >= 10) {
-            log('Seçildi: ' + candidates[0].item.id + ' score=' + candidates[0].score);
-            return candidates[0].item;
-          }
-
-          // Tie: yıl ile ayırt et
-          log('Tie durumu — yıl fetch ediliyor');
-          return Promise.all(
-            candidates.slice(0, 3).map(function(c) {
-              return fetchYearFromPage(c.item, mediaType).then(function(yr) {
-                log('  ' + c.item.id + ' yıl=' + (yr || '?'));
-                return { item: c.item, year: yr, score: c.score };
-              });
-            })
-          ).then(function(withYears) {
-            var exact = withYears.find(function(c) { return c.year === info.year; });
-            if (exact) {
-              log('Yıl eşleşti: ' + exact.item.id);
-              return exact.item;
-            }
-            log('Yıl eşleşmedi, ilk aday: ' + withYears[0].item.id);
-            return withYears[0].item;
-          });
+          log('Yıl eşleşmedi, ilk aday: ' + withYears[0].item.id);
+          return withYears[0].item;
         });
       });
-    }, Promise.resolve(null));
-  });
+    });
+  }, Promise.resolve(null));
 }
 
 // ── 3. Global bölüm numarası ──────────────────────────────────
