@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider  (v12)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -13,7 +13,7 @@ var SEARCH_DIZI = BASE_URL + '/dizi/gmb/gumball';
 var SEARCH_FILM = BASE_URL + '/film/_/_';
 
 var HEADERS = {
-  'User-Agent':      'EasyPlex (Android 14; SM-A546B; Samsung Galaxy A54 5G; tr)',
+  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
   'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
   'Referer':         BASE_URL + '/'
@@ -51,15 +51,35 @@ function getHtml(url, extra) {
 // ── Base64 decode (Hermes uyumlu) ────────────────────────────
 
 function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
+  // Buffer: Node.js ortamı
   if (typeof Buffer !== 'undefined') {
     try {
       return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
     } catch(e) {}
   }
-  // atob: RN 0.73+ ve tarayıcı
+  // QuickJS / tarayıcı: atob latin1 döndürür, UTF-8 decode gerekli
   if (typeof atob !== 'undefined') {
-    try { return JSON.parse(atob(b64)); } catch(e) {}
+    try {
+      var raw = atob(b64);
+      // UTF-8 byte dizisini stringe çevir
+      var bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      var decoded;
+      if (typeof TextDecoder !== 'undefined') {
+        decoded = new TextDecoder('utf-8').decode(bytes);
+      } else {
+        // Manuel UTF-8 decode
+        decoded = '';
+        var i2 = 0;
+        while (i2 < bytes.length) {
+          var b = bytes[i2];
+          if (b < 0x80) { decoded += String.fromCharCode(b); i2++; }
+          else if (b < 0xE0) { decoded += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i2+1] & 0x3F)); i2 += 2; }
+          else { decoded += String.fromCharCode(((b & 0x0F) << 12) | ((bytes[i2+1] & 0x3F) << 6) | (bytes[i2+2] & 0x3F)); i2 += 3; }
+        }
+      }
+      return JSON.parse(decoded);
+    } catch(e) {}
   }
   return null;
 }
@@ -79,6 +99,8 @@ function encPath(s) {
 // ── 1. TMDB ──────────────────────────────────────────────────
 
 function fetchTmdbInfo(tmdbId, mediaType) {
+  // Nuvio bazen "tmdb:12345" formatında gönderiyor
+  tmdbId = String(tmdbId).replace(/^tmdb[:/]/i, '').split('/')[0].split(':')[0].trim();
   var ep  = mediaType === 'tv' ? 'tv' : 'movie';
   var url = 'https://api.themoviedb.org/3/' + ep + '/' + tmdbId
           + '?api_key=' + TMDB_KEY + '&language=tr-TR';
@@ -468,4 +490,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
 }
 
 // ── Export ───────────────────────────────────────────────────
-module.exports = { getStreams };
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { getStreams: getStreams };
+} else {
+  global.getStreams = getStreams;
+}
