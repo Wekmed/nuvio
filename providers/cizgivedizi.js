@@ -19,8 +19,7 @@ var HEADERS = {
   'Referer':         BASE_URL + '/'
 };
 
-var STOP = ['the','a','an','of','in','on','at','to','and','or','for',
-            've','bir','ile','bu','mi','mu','mı','mü','da','de'];
+var STOP = [];
 
 // ── Log ──────────────────────────────────────────────────────
 
