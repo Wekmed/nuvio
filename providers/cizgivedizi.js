@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v13)
+ * CizgiVeDizi — Nuvio Provider  (v15)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -443,8 +443,32 @@ function extractStream(url) {
 function buildEpUrl(item, mediaType, epGlobalNo) {
   if (mediaType === 'movie')
     return BASE_URL + '/film/' + encPath(item.id) + '/' + encPath(item.slug);
+  // Temel URL — epSlug olmadan, site 301 ile doğru slug'a yönlendirir
   return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
-       + '/' + epGlobalNo + '/-';
+       + '/' + epGlobalNo;
+}
+
+// Dizi ana sayfasından ep listesini çek → globalNo'ya karşılık gelen tam URL'yi bul
+function fetchEpUrl(item, epGlobalNo) {
+  var diziUrl = BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug);
+  return getHtml(diziUrl)
+    .then(function(html) {
+      // ep-card href'lerini tara: /dizi/{id}/{slug}/{no}/{epSlug}
+      var re = /href="(\/dizi\/[^"]+\/(\d+)\/[^"]+)"/g, m;
+      while ((m = re.exec(html)) !== null) {
+        if (parseInt(m[2]) === epGlobalNo) {
+          var found = BASE_URL + m[1];
+          log('epUrl listeden: ' + found);
+          return found;
+        }
+      }
+      // Bulunamazsa redirect'e bırak
+      log('epUrl listede yok, direkt deneniyor');
+      return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug) + '/' + epGlobalNo + '/-';
+    })
+    .catch(function() {
+      return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug) + '/' + epGlobalNo + '/-';
+    });
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
@@ -468,10 +492,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
-        var epUrl = buildEpUrl(item, mediaType, epGlobal);
-        log('Bölüm URL: ' + epUrl);
+        var epUrlPromise = mediaType === 'tv'
+          ? fetchEpUrl(item, epGlobal)
+          : Promise.resolve(buildEpUrl(item, mediaType, epGlobal));
 
-        return getHtml(epUrl).then(function(html) {
+        return epUrlPromise.then(function(epUrl) {
+        log('Bölüm URL: ' + epUrl);
+        return getHtml(epUrl);
+        }).then(function(html) {
           var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
@@ -479,10 +507,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
             log('Embed bulunamadı');
             return [];
           }
-          log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
+          var topEmbeds = embeds.slice(0, 3);
+          log(embeds.length + ' embed, ilk ' + topEmbeds.length + ' alınıyor: ' + topEmbeds.join(', '));
 
           return Promise.all(
-            embeds.map(function(embedUrl, idx) {
+            topEmbeds.map(function(embedUrl, idx) {
               return extractStream(embedUrl).then(function(stream) {
                 if (!stream) return null;
                 var srcName = srcNames[idx] || ('Kaynak ' + idx);
