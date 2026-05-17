@@ -17,14 +17,18 @@ var HEADERS = {
 // ── Yardımcılar ───────────────────────────────────────────────
 
 function fetchTmdbInfo(tmdbId) {
-  return fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+  return fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR&append_to_response=alternative_titles')
     .then(function(r) { return r.json(); })
     .then(function(d) {
+      var alts = [];
+      if (d.alternative_titles && Array.isArray(d.alternative_titles.results))
+        d.alternative_titles.results.forEach(function(a) { if (a.title) alts.push(a.title); });
       return {
         title: d.name || d.original_name || 'Dizi',
         titleEn: d.original_name || '',
         titleTr: d.name || '',
-        year: (d.first_air_date || '').slice(0, 4)
+        year: (d.first_air_date || '').slice(0, 4),
+        altTitles: alts
       };
     });
 }
@@ -53,36 +57,41 @@ function fetchAspData() {
 function titleToSlug(t) {
   if(!t) return "";
   return t.toLowerCase()
+    .replace(/&/g,'and').replace(/'/g,'').replace(/’/g,'')
     .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
     .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o').replace(/ç/g,'c')
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
-function validateShowPage(slug) {
-  var url = BASE_URL + '/diziler/' + slug + '.html';
+function validateShowPage(slug, s, e) {
+  var url = BASE_URL + '/' + slug + '/' + (s||1) + '-sezon-' + (e||1) + '-bolum.html';
   return fetch(url, { headers: HEADERS })
     .then(function(r) {
-      if (r.status === 404) return null;
+      if (r.status === 404 || r.status === 403) return null;
       return r.text().then(function(html) {
         if (html.indexOf('Sayfa Bulunamad') !== -1 || html.indexOf('Haydaaa') !== -1) return null;
-        var m = html.match(/href="\/([^\/]+)\/\d+-sezon-\d+-bolum\.html"/i);
-        return m ? m[1] : slug;
+        if (html.indexOf('data-id') === -1) return null;
+        return slug;
       });
     })
     .catch(function() { return null; });
 }
 
-function findShowSlug(slugEn, slugTr) {
-  var candidates = [slugEn];
-  if (slugTr && slugTr !== slugEn) candidates.push(slugTr);
+function findShowSlug(slugEn, slugTr, altTitles, season, episode) {
+  var seen = {}, cands = [];
+  function add(s) { if (s && s.length > 1 && !seen[s]) { seen[s]=true; cands.push(s); } }
+  add(slugEn); add(slugTr);
+  (altTitles||[]).forEach(function(t) { add(titleToSlug(t)); });
+  console.log('[SezonlukDizi] ' + cands.length + ' aday: ' + cands.slice(0,5).join(' | '));
   return new Promise(function(resolve) {
+    if (!cands.length) { resolve(null); return; }
     var settled = false, done = 0;
-    candidates.forEach(function(slug) {
-      validateShowPage(slug).then(function(result) {
+    cands.forEach(function(slug) {
+      validateShowPage(slug, season, episode).then(function(result) {
         done++;
         if (settled) return;
         if (result) { settled = true; resolve(result); }
-        else if (done === candidates.length) resolve(null);
+        else if (done === cands.length) resolve(null);
       });
     });
   });
@@ -190,7 +199,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
   return Promise.all([fetchTmdbInfo(tmdbId), fetchSessionCookie(), fetchAspData()])
     .then(function(init) {
       var info = init[0], cookie = init[1], aspData = init[2];
-      return findShowSlug(titleToSlug(info.titleEn), titleToSlug(info.titleTr)).then(function(slug) {
+      return findShowSlug(titleToSlug(info.titleEn),titleToSlug(info.titleTr),info.altTitles,season,episode).then(function(slug) {
         if (!slug) throw new Error('Dizi bulunamadı');
         var epUrl = BASE_URL + '/' + slug + '/' + season + '-sezon-' + episode + '-bolum.html';
         return fetchBid(epUrl, cookie).then(function(bd) {
