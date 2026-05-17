@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider  (v13)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -48,19 +48,62 @@ function getHtml(url, extra) {
     });
 }
 
-// ── Base64 decode (Hermes uyumlu) ────────────────────────────
+// ── Base64 decode (QuickJS + Hermes uyumlu) ─────────────────
 
 function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
+  // 1) Buffer: React Native / Node ortamı
   if (typeof Buffer !== 'undefined') {
-    try {
-      return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    } catch(e) {}
+    try { return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); } catch(e) {}
   }
-  // atob: RN 0.73+ ve tarayıcı
+
+  // 2) Pure-JS base64 → UTF-8 byte dizisi → string
+  //    atob() sadece Latin-1 byte'ları döndürür; UTF-8 çok-baytlı
+  //    karakterleri doğru okumak için byte'ları manuel decode ediyoruz.
+  try {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    var s = b64.replace(/[\r\n ]/g, '');
+    // padding olmadan uzunluk 4'ün katı olmayabilir, normalize et
+    while (s.length % 4) s += '=';
+
+    // base64 → byte array
+    var bytes = [];
+    for (var i = 0; i < s.length; i += 4) {
+      var e1 = chars.indexOf(s[i]),
+          e2 = chars.indexOf(s[i+1]),
+          e3 = s[i+2] === '=' ? 0 : chars.indexOf(s[i+2]),
+          e4 = s[i+3] === '=' ? 0 : chars.indexOf(s[i+3]);
+      bytes.push((e1 << 2) | (e2 >> 4));
+      if (s[i+2] !== '=') bytes.push(((e2 & 15) << 4) | (e3 >> 2));
+      if (s[i+3] !== '=') bytes.push(((e3 &  3) << 6) | e4);
+    }
+
+    // UTF-8 byte dizisi → JS string
+    var out = '', j = 0;
+    while (j < bytes.length) {
+      var b = bytes[j++];
+      if (b < 0x80) {
+        out += String.fromCharCode(b);
+      } else if ((b & 0xE0) === 0xC0) {
+        out += String.fromCharCode(((b & 0x1F) << 6) | (bytes[j++] & 0x3F));
+      } else if ((b & 0xF0) === 0xE0) {
+        var b2 = bytes[j++], b3 = bytes[j++];
+        out += String.fromCharCode(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+      } else {
+        // 4-byte (emoji vb.) — surrogate pair
+        var b2 = bytes[j++], b3 = bytes[j++], b4 = bytes[j++];
+        var cp = (((b & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000;
+        out += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF));
+      }
+    }
+    return JSON.parse(out);
+  } catch(e) {}
+
+  // 3) Son çare: atob + escape trick (ASCII-only base64 için çalışır)
   if (typeof atob !== 'undefined') {
+    try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch(e) {}
     try { return JSON.parse(atob(b64)); } catch(e) {}
   }
+
   return null;
 }
 
@@ -338,7 +381,7 @@ function isVideoUrl(url) {
 
 function extractSibnet(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/' })
+  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)["']/i)
            || html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4)["']/i);
@@ -350,7 +393,7 @@ function extractSibnet(url) {
 
 function extractVidmoly(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
@@ -359,7 +402,7 @@ function extractVidmoly(url) {
 
 function extractMp4upload(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?:\/\/[^"']+)["']/i)
            || html.match(/[,\{]\s*file\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)/i);
@@ -376,7 +419,7 @@ function extractMp4upload(url) {
 
 function extractMailRu(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
