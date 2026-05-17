@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v15)
+ * CizgiVeDizi — Nuvio Provider  (v16)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -44,6 +44,28 @@ function getHtml(url, extra) {
   return fetch(url, { headers: Object.assign({}, HEADERS, extra || {}) })
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
+      return r.text();
+    });
+}
+
+// ── Fetch with Size Limit ────────────────────────────────────
+
+function getHtmlLimited(url, maxBytes, extra) {
+  return fetch(url, { headers: Object.assign({}, HEADERS, extra || {}) })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' → ' + url);
+      var contentLength = r.headers.get('content-length');
+      var totalSize = contentLength ? parseInt(contentLength) : 0;
+      
+      if (totalSize > 0 && totalSize > maxBytes) {
+        var start = Math.max(0, totalSize - maxBytes);
+        log('Dosya büyük (' + totalSize + ' bytes), son ' + maxBytes + ' byte çekiliyor');
+        return fetch(url, { 
+          headers: Object.assign({}, HEADERS, extra || {}, { 'Range': 'bytes=' + start + '-' })
+        }).then(function(r2) {
+          return r2.text();
+        });
+      }
       return r.text();
     });
 }
@@ -346,14 +368,23 @@ function parseEmbeds(html) {
   var scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   var sm;
   while ((sm = scriptRe.exec(html)) !== null) {
-    var urlRe = /["'`]((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'`\s<>]+|my\.mail\.ru\/video\/embed\/[^"'`\s<>]+|www\.mp4upload\.com\/embed-[^"'`\s<>]+|vidmoly\.to\/e\/[^"'`\s<>]+|ok\.ru\/videoembed\/[^"'`\s<>]+|vk\.com\/video_ext[^"'`\s<>]+))/gi;
+    var urlRe = /["'`]((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'`\s<>]+|my\.mail\.ru\/video\/embed\/[^"'`\s<>]+|www\.mp4upload\.com\/embed-[^"'`\s<>]+|vidmoly\.to\/e\/[^"'`\s<>]+|ok\.r[...]
     var um;
     while ((um = urlRe.exec(sm[1])) !== null) {
       var u = um[1];
       if (!seen[u]) { seen[u] = true; urls.push(u); }
     }
   }
-  if (urls.length) log('Script parse: ' + urls.length + ' embed');
+
+  // D: Direct src= pattern (büyük dosyalarda script content kaçabilir)
+  var directRe = /(?:src|href)\s*=\s*["'](https?:\/\/(?:video\.sibnet\.ru|my\.mail\.ru|www\.mp4upload\.com|vidmoly\.to|ok\.ru)[^"']*)/gi;
+  var dm2;
+  while ((dm2 = directRe.exec(html)) !== null) {
+    var u2 = dm2[1];
+    if (!seen[u2]) { seen[u2] = true; urls.push(u2); }
+  }
+
+  if (urls.length) log('Embed parse: ' + urls.length + ' embed');
   return urls;
 }
 
@@ -451,7 +482,7 @@ function buildEpUrl(item, mediaType, epGlobalNo) {
 // Dizi ana sayfasından ep listesini çek → globalNo'ya karşılık gelen tam URL'yi bul
 function fetchEpUrl(item, epGlobalNo) {
   var diziUrl = BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug);
-  return getHtml(diziUrl)
+  return getHtmlLimited(diziUrl, 256 * 1024)
     .then(function(html) {
       // ep-card href'lerini tara: /dizi/{id}/{slug}/{no}/{epSlug}
       var re = /href="(\/dizi\/[^"]+\/(\d+)\/[^"]+)"/g, m;
