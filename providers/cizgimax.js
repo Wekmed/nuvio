@@ -1,6 +1,5 @@
 // ============================================================
 //  CizgiMax — Nuvio Provider
-//  HTML
 // ============================================================
 
 var MAIN_URL     = 'https://cizgimax.online';
@@ -47,15 +46,8 @@ function searchSite(query) {
 
 function findBestMatch(results, en, tr) {
   var nEn = normalizeStr(en), nTr = normalizeStr(tr);
-  
-  // ── ÖZEL İSİM AYARLARI (İSTİSNALAR / MANUEL DÜZELTMELER) ────
-  if (nEn.indexOf('chip n dale') !== -1 || nEn.indexOf('chip dale') !== -1) {
-    nEn = 'chip ve dale';
-    nTr = 'chip ve dale';
-  }
-  // ───────────────────────────────────────────────────────────
-
   var best = null, bestScore = 0;
+
   results.forEach(function(r) {
     if (r.kind === 'film') return; 
     var ni = normalizeStr(r.name), sc = 0;
@@ -64,6 +56,7 @@ function findBestMatch(results, en, tr) {
     else if (nTr && (ni.indexOf(nTr) !== -1 || nTr.indexOf(ni) !== -1)) sc += 60;
     if (sc > bestScore) { bestScore = sc; best = r; }
   });
+
   if (!best) {
     results.forEach(function(r) {
       var ni = normalizeStr(r.name), sc = 0;
@@ -84,14 +77,13 @@ function buildEpisodeUrl(diziUrl, season, episode) {
   return MAIN_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
 }
 
-// ── Doğrudan API İndirme Linklerini Yakala ────────────────────
+// ── URL Değişimi ile Ara Sayfayı Atlayıp Doğrudan Stream Linkini Al ──
 function fetchEpisodeStreams(epUrl) {
   return fetch(epUrl, { headers: HEADERS })
     .then(function(r) { return r.text(); })
     .then(function(html) {
-      var results = [];
+      var downloadLinks = [];
       
-      // HTML içindeki "İndir" geçen a etiketlerini bulup api linklerini listeye ekliyoruz
       var linkRe = /href=["']([^"']+)["'][^>]*>([\s\S]*?<\/a>)/gi;
       var match;
       while ((match = linkRe.exec(html)) !== null) {
@@ -100,17 +92,43 @@ function fetchEpisodeStreams(epUrl) {
           var fullUrl = rawUrl.startsWith('http') ? rawUrl : MAIN_URL + rawUrl;
           var label = match[2].indexOf('Direkt') !== -1 ? 'Direkt İndir' : 'Alternatif İndir';
           
-          results.push({
-            name:    'CizgiMax',
-            title:   '⌜ CİZGİMAX ⌟ | ' + label,
-            url:     fullUrl, // Doğrudan API indirme linki fırlatılıyor
-            quality: 'Auto',
-            headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+          downloadLinks.push({
+            url: fullUrl,
+            label: label
           });
         }
       }
 
-      return results;
+      if (downloadLinks.length === 0) return [];
+
+      var results = [];
+      var chain = Promise.resolve();
+
+      downloadLinks.forEach(function(item) {
+        chain = chain.then(function() {
+          // Harika tespit! Sayfayı indirmeden direkt URL manipülasyonu yapıyoruz:
+          // /indir/sibnet/?t=... -> /api/indir/sibnet/?t=...
+          var apiUrl = item.url.replace('/indir/', '/api/indir/');
+
+          // Doğrudan API linkine istek atarak nihai stream.cizgimax.online linkini yakalıyoruz
+          return fetch(apiUrl, { headers: Object.assign({}, HEADERS, { 'Referer': item.url }) })
+            .then(function(apiRes) {
+              var finalUrl = apiRes.url || apiUrl;
+              results.push({
+                name:    'CizgiMax',
+                title:   '⌜ CİZGİMAX ⌟ | ' + item.label,
+                url:     finalUrl, // Oynatıcıya giden nihai mp4 akış linki
+                quality: 'Auto',
+                headers: { 'Referer': item.url, 'User-Agent': HEADERS['User-Agent'] }
+              });
+            });
+        })
+        .catch(function(e) {
+          console.log('[CizgiMax] Link dönüştürülürken hata: ' + e.message);
+        });
+      });
+
+      return chain.then(function() { return results; });
     })
     .catch(function() { return []; });
 }
@@ -120,6 +138,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
   return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
       if (!info.titleEn && !info.titleTr) return [];
+
+      // ── ÖZEL İSİM AYARLARI (İSTİSNALAR / MANUEL DÜZELTMELER) ──
+      var checkName = (info.titleEn || '').toLowerCase();
+      if (checkName.indexOf('chip n dale') !== -1 || checkName.indexOf('chip dale') !== -1) {
+        info.titleEn = 'Chip ve Dale';
+        info.titleTr = 'Chip ve Dale';
+      }
+      // ─────────────────────────────────────────────────────────
+
       return searchSite(info.titleEn || info.titleTr)
         .then(function(results) {
           var best = findBestMatch(results, info.titleEn, info.titleTr);
