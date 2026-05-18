@@ -1,5 +1,6 @@
 // ============================================================
 //  CizgiMax — Nuvio Provider
+//  HTML
 // ============================================================
 
 var MAIN_URL     = 'https://cizgimax.online';
@@ -77,12 +78,12 @@ function buildEpisodeUrl(diziUrl, season, episode) {
   return MAIN_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
 }
 
-// ── URL Değişimi ile Ara Sayfayı Atlayıp Doğrudan Stream Linkini Al ──
+// ── Doğrudan API Linkini Düzenleyip Pasla ─────────────────────
 function fetchEpisodeStreams(epUrl) {
   return fetch(epUrl, { headers: HEADERS })
     .then(function(r) { return r.text(); })
     .then(function(html) {
-      var downloadLinks = [];
+      var results = [];
       
       var linkRe = /href=["']([^"']+)["'][^>]*>([\s\S]*?<\/a>)/gi;
       var match;
@@ -90,45 +91,26 @@ function fetchEpisodeStreams(epUrl) {
         if (match[2].indexOf('İndir') !== -1) {
           var rawUrl = match[1];
           var fullUrl = rawUrl.startsWith('http') ? rawUrl : MAIN_URL + rawUrl;
+          
+          // 1. Linkteki bozuk &amp; yapılarını temiz temiz & yapıyoruz
+          fullUrl = fullUrl.replace(/&amp;/g, '&');
+          
+          // 2. Tam istediğin gibi /indir/ kısmını /api/indir/ yapıyoruz
+          var apiUrl = fullUrl.replace('/indir/', '/api/indir/');
+          
           var label = match[2].indexOf('Direkt') !== -1 ? 'Direkt İndir' : 'Alternatif İndir';
           
-          downloadLinks.push({
-            url: fullUrl,
-            label: label
+          results.push({
+            name:    'CizgiMax',
+            title:   '⌜ CİZGİMAX ⌟ | ' + label,
+            url:     apiUrl, // Nuvio'ya doğrudan tertemiz /api/indir/ linkini veriyoruz
+            quality: 'Auto',
+            headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
           });
         }
       }
 
-      if (downloadLinks.length === 0) return [];
-
-      var results = [];
-      var chain = Promise.resolve();
-
-      downloadLinks.forEach(function(item) {
-        chain = chain.then(function() {
-          // Harika tespit! Sayfayı indirmeden direkt URL manipülasyonu yapıyoruz:
-          // /indir/sibnet/?t=... -> /api/indir/sibnet/?t=...
-          var apiUrl = item.url.replace('/indir/', '/api/indir/');
-
-          // Doğrudan API linkine istek atarak nihai stream.cizgimax.online linkini yakalıyoruz
-          return fetch(apiUrl, { headers: Object.assign({}, HEADERS, { 'Referer': item.url }) })
-            .then(function(apiRes) {
-              var finalUrl = apiRes.url || apiUrl;
-              results.push({
-                name:    'CizgiMax',
-                title:   '⌜ CİZGİMAX ⌟ | ' + item.label,
-                url:     finalUrl, // Oynatıcıya giden nihai mp4 akış linki
-                quality: 'Auto',
-                headers: { 'Referer': item.url, 'User-Agent': HEADERS['User-Agent'] }
-              });
-            });
-        })
-        .catch(function(e) {
-          console.log('[CizgiMax] Link dönüştürülürken hata: ' + e.message);
-        });
-      });
-
-      return chain.then(function() { return results; });
+      return results;
     })
     .catch(function() { return []; });
 }
