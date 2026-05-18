@@ -1,6 +1,6 @@
 // ============================================================
 //  CizgiMax — Nuvio Provider
-//  
+//  HTML
 // ============================================================
 
 var MAIN_URL     = 'https://cizgimax.online';
@@ -14,11 +14,6 @@ var HEADERS = {
 };
 
 // ── Yardımcı ─────────────────────────────────────────────────
-function regexFirst(html, pattern, flags) {
-  var m = new RegExp(pattern, flags || 's').exec(html);
-  return m ? m[1] : null;
-}
-
 function normalizeStr(s) {
   return (s || '').toLowerCase()
     .replace(/[ğ]/g,'g').replace(/[ü]/g,'u').replace(/[ş]/g,'s')
@@ -52,6 +47,14 @@ function searchSite(query) {
 
 function findBestMatch(results, en, tr) {
   var nEn = normalizeStr(en), nTr = normalizeStr(tr);
+  
+  // ── ÖZEL İSİM AYARLARI (İSTİSNALAR / MANUEL DÜZELTMELER) ────
+  if (nEn.indexOf('chip n dale') !== -1 || nEn.indexOf('chip dale') !== -1) {
+    nEn = 'chip ve dale';
+    nTr = 'chip ve dale';
+  }
+  // ───────────────────────────────────────────────────────────
+
   var best = null, bestScore = 0;
   results.forEach(function(r) {
     if (r.kind === 'film') return; 
@@ -81,117 +84,33 @@ function buildEpisodeUrl(diziUrl, season, episode) {
   return MAIN_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
 }
 
-// ── İndirme Butonlarından Stream Çıkar ────────────────────────
+// ── Doğrudan API İndirme Linklerini Yakala ────────────────────
 function fetchEpisodeStreams(epUrl) {
   return fetch(epUrl, { headers: HEADERS })
     .then(function(r) { return r.text(); })
     .then(function(html) {
-      var downloadLinks = [];
+      var results = [];
       
-      // HTML içindeki "İndir" geçen a etiketlerinin linklerini ayıklıyoruz
+      // HTML içindeki "İndir" geçen a etiketlerini bulup api linklerini listeye ekliyoruz
       var linkRe = /href=["']([^"']+)["'][^>]*>([\s\S]*?<\/a>)/gi;
       var match;
       while ((match = linkRe.exec(html)) !== null) {
         if (match[2].indexOf('İndir') !== -1) {
           var rawUrl = match[1];
           var fullUrl = rawUrl.startsWith('http') ? rawUrl : MAIN_URL + rawUrl;
-          downloadLinks.push({ url: fullUrl, text: match[2] });
+          var label = match[2].indexOf('Direkt') !== -1 ? 'Direkt İndir' : 'Alternatif İndir';
+          
+          results.push({
+            name:    'CizgiMax',
+            title:   '⌜ CİZGİMAX ⌟ | ' + label,
+            url:     fullUrl, // Doğrudan API indirme linki fırlatılıyor
+            quality: 'Auto',
+            headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+          });
         }
       }
 
-      if (!downloadLinks.length) {
-        console.log('[CizgiMax] Herhangi bir indirme butonu bulunamadı');
-        return [];
-      }
-
-      var results = [];
-      var chain   = Promise.resolve();
-
-      downloadLinks.forEach(function(item) {
-        chain = chain.then(function() {
-          var label = item.text.indexOf('Direkt') !== -1 ? 'Direkt İndir' : 'Alternatif İndir';
-
-          // Butonun yönlendiği adrese gidip nihai video sağlayıcısını yakalıyoruz
-          return fetch(item.url, { headers: HEADERS })
-            .then(function(res) {
-              var finalUrl = res.url || item.url;
-
-              // ─── 1. SİBNET (Direkt İndir) KONTROLÜ ───
-              if (finalUrl.indexOf('sibnet') !== -1 || item.text.indexOf('Direkt') !== -1) {
-                if (finalUrl.indexOf('.mp4') !== -1) {
-                  results.push({
-                    name:    'CizgiMax',
-                    title:   '⌜ CİZGİMAX ⌟ | ' + label,
-                    url:     finalUrl,
-                    quality: 'Auto',
-                    headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
-                  });
-                  return;
-                }
-
-                // Eğer sibnet video sayfasına düştüyse içindeki mp4 linkini çekelim
-                return res.text().then(function(pageHtml) {
-                  var m = pageHtml.match(/src\s*:\s*"(\/v\/[^"]+\.mp4[^"]*)"/i)
-                       || pageHtml.match(/"(https?:\/\/[^"]+\.mp4[^"]*)"/i);
-                  if (m) {
-                    var src = m[1];
-                    var streamUrl = src.startsWith('http') ? src : 'https://video.sibnet.ru' + src;
-                    results.push({
-                      name:    'CizgiMax',
-                      title:   '⌜ CİZGİMAX ⌟ | ' + label,
-                      url:     streamUrl,
-                      quality: 'Auto',
-                      headers: { 'Referer': finalUrl, 'User-Agent': HEADERS['User-Agent'] }
-                    });
-                  } else {
-                    // Fallback: Linki doğrudan pasla
-                    results.push({
-                      name:    'CizgiMax',
-                      title:   '⌜ CİZGİMAX ⌟ | ' + label,
-                      url:     finalUrl,
-                      quality: 'Auto',
-                      headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
-                    });
-                  }
-                });
-              }
-
-              // ─── 2. VİDMOLY (Alternatif İndir) KONTROLÜ ───
-              if (finalUrl.indexOf('vidmoly') !== -1 || item.text.indexOf('Alternatif') !== -1) {
-                var idMatch = finalUrl.match(/(?:embed-|dl\/|w\/|v\/)?([a-zA-Z0-9]{12})/);
-                if (!idMatch) return null;
-
-                var id = idMatch[1];
-                // Korumasız temiz embed linki oluşturuluyor
-                var embedUrl = 'https://vidmoly.biz/embed-' + id + '.html';
-
-                // Embed sayfasının kaynağı indirilip içindeki jwplayer master .m3u8 linki süzülüyor
-                return fetch(embedUrl, {
-                  headers: Object.assign({}, HEADERS, { 'Referer': MAIN_URL + '/' })
-                })
-                .then(function(r2) { return r2.text(); })
-                .then(function(embedHtml) {
-                  var m = embedHtml.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
-                  if (!m) return;
-
-                  var streamUrl = m[1].replace(/&amp;/g, '&');
-                  results.push({
-                    name:    'CizgiMax',
-                    title:   '⌜ CİZGİMAX ⌟ | ' + label,
-                    url:     streamUrl,
-                    quality: 'Auto',
-                    headers: { 'Referer': embedUrl, 'User-Agent': HEADERS['User-Agent'] }
-                  });
-                });
-              }
-            })
-            .catch(function(e) {
-              console.log('[CizgiMax] Buton çözümlenirken hata oluştu: ' + e.message);
-            });
-        });
-      });
-
-      return chain.then(function() { return results; });
+      return results;
     })
     .catch(function() { return []; });
 }
