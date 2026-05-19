@@ -1,5 +1,5 @@
-{
-  "name": "Erenxyz",
+{.
+  "name": "Wekmed Turkish Repo",
   "version": "1.0.0",
   "scrapers": [
     {
@@ -180,6 +180,26 @@
       ],
       "limited": false,
       "disabledPlatforms": []
+    },
+    {
+      "id": "dizilife",
+      "name": "DiziLife",
+      "description": "Türk dizi ve filmler — Türkçe & İngilizce ses + altyazı",
+      "version": "1.0.0",
+      "author": "Wekmed",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/dizilife.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=dizi62.life&sz=128",
+      "contentLanguage": [
+        "tr"
+      ]
     },
 {
   "id": "diziyou",
