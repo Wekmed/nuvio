@@ -410,7 +410,7 @@ function parseEksenLoad(embedUrl, referer) {
         }
         if (finalUrl.includes("m3u8")) {
           streams.push({
-            name: "patronFilmEkseni",
+            name: "FilmEkseni",
             title: "EksenLoad m3u8",
             url: finalUrl,
             quality: "Auto",
