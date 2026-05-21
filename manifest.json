@@ -39,6 +39,19 @@
       "disabledPlatforms": []
     },
     {
+  "id": "filmekseni",
+  "name": "Film Ekseni",
+  "description": "Türkçe film ve diziler - filmekseni.cc",
+  "version": "1.0.0",
+  "author": "",
+  "supportedTypes": ["movie", "tv"],
+  "filename": "providers/filmekseni.js",
+  "enabled": true,
+  "formats": ["mp4", "m3u8"],
+  "logo": "https://filmekseni.cc/favicon.ico",
+  "contentLanguage": ["tr"]
+    },
+    {
       "id": "m3u_provider",
       "name": "M3U Birleşik",
       "description": "birlesik.m3u dosyasından TMDB eşleştirmeli stream. Vidmody, m3u8 ve direkt linkler desteklenir.",
