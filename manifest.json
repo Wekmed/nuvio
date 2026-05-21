@@ -21,6 +21,30 @@
       "disabledPlatforms": []
     },
     {
+      "id": "filmmakinesi",
+      "name": "FilmMakinesi",
+      "description": "FilmMakinesi.to uzerinden Turkce dublajli ve altyazili filmler.",
+      "version": "1.0.1",
+      "author": "patr0n",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/filmmakinesi.js",
+      "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=filmmakinesi.film&sz=%size%",
+      "contentLanguage": [
+        "tr"
+      ],
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true
+    },
+    {
       "id": "hdfilmcehennemi",
       "name": "HDFilmCehennemi",
       "description": "Türkçe dublaj ve altyazılı full HD film ve diziler. hdfilmcehennemi üzerinden stream sağlar.",
@@ -50,6 +74,31 @@
   "formats": ["mp4", "m3u8"],
   "logo": "https://filmekseni.cc/favicon.ico",
   "contentLanguage": ["tr"]
+    },
+    {
+      "id": "patron-setfilm",
+      "name": "patronSetFilmIzle",
+      "description": "SetFilmIzle tabanli film ve dizi saglayicisi. @patr0n tarafindan gelistirildi.",
+      "version": "1.0.0",
+      "author": "patr0n",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/Setfilm.js",
+      "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=setfilmizle.uk&sz=64",
+      "contentLanguage": [
+        "tr"
+      ],
+      "formats": [
+        "m3u8",
+        "mp4",
+        "mkv"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true
     },
     {
       "id": "m3u_provider",
