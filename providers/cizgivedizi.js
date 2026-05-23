@@ -1,5 +1,5 @@
 /**
- * CizgiVeDizi — Nuvio Provider  (v11)
+ * CizgiVeDizi — Nuvio Provider  (v24)
  * cizgivedizi.com üzerinden çizgi film, dizi ve film stream sağlar.
  */
 
@@ -38,6 +38,10 @@ function norm(s) {
     .replace(/[^a-z0-9]/g,'');
 }
 
+// v24: Site güncellendi — bölüm sayfaları shell döndürüyor.
+//      getHtmlFull → ?ajax=page ile gerçek içerik çekiyor.
+//      fetchEpUrl  → ajax=episodes JSONundan bölüm URLi alıyor (daha hızlı, güvenilir).
+//      fetchYearFromPage → ?ajax=page eklendi.
 // ── Fetch ────────────────────────────────────────────────────
 
 function getHtml(url, extra) {
@@ -48,19 +52,134 @@ function getHtml(url, extra) {
     });
 }
 
-// ── Base64 decode (Hermes uyumlu) ────────────────────────────
+// Büyük sayfalar için streaming fetch.
+// body.getReader() destekleniyorsa (Node/modern browser) chunkları okur,
+// __embeds_b64 satırı görülür görülmez bağlantıyı keser — 256KB limiti aşılmaz.
+// QuickJS (Nuvio runtime) getReader() desteklemez, text() kullanır.
+// Ancak Nuvioda küçük sayfalarda (Baykuş Evi) zaten çalışıyor;
+// büyük sayfalarda (Regular Show) stream olmadan çalışması mümkün değil —
+// o durumda bu fonksiyon en azından ne bulursa döndürür.
+function getHtmlFull(url, extra) {
+  var baseHeaders = Object.assign({}, HEADERS, extra || {});
+  var NEEDLE = '__embeds_b64';
+
+  // Site artık shell döndürüyor — gerçek içerik ?ajax=page ile geliyor
+  var pageUrl = url.indexOf('?') === -1 ? url + '?ajax=page' : url + '&ajax=page';
+
+  return fetch(pageUrl, { headers: baseHeaders }).then(function(r) {
+    if (!r.ok) return '';
+
+    // getReader() mevcut mu? (Node.js 18+ ve modern browserda var)
+    if (r.body && typeof r.body.getReader === 'function') {
+      return new Promise(function(resolve) {
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder('utf-8');
+        var accumulated = '';
+
+        function pump() {
+          reader.read().then(function(ref) {
+            var done  = ref.done;
+            var value = ref.value;
+
+            if (value) {
+              accumulated += decoder.decode(value, { stream: !done });
+            }
+
+            // Needle bulundu mu?
+            if (accumulated.indexOf(NEEDLE) !== -1) {
+              // __embeds_b64ün bulunduğu satırın sonuna kadar oku
+              var nlIdx = accumulated.indexOf(String.fromCharCode(10), accumulated.indexOf(NEEDLE));
+              if (nlIdx !== -1 || done) {
+                reader.cancel().catch(function(){});
+                log('Stream erken kesildi — embed satırı bulundu (' +
+                    Math.round(accumulated.length / 1024) + 'KB okundu)');
+                resolve(accumulated);
+                return;
+              }
+            }
+
+            if (done) {
+              resolve(accumulated);
+              return;
+            }
+
+            // 2MB güvenlik sınırı
+            if (accumulated.length > 2 * 1024 * 1024) {
+              reader.cancel().catch(function(){});
+              log('Stream 2MB sınırına ulaştı, kesiliyor');
+              resolve(accumulated);
+              return;
+            }
+
+            pump();
+          }).catch(function() { resolve(accumulated); });
+        }
+
+        pump();
+      });
+    }
+
+    // Fallback: getReader yok (QuickJS) — normal text()
+    return r.text();
+  }).catch(function() { return ''; });
+}
+
+// ── Base64 decode (QuickJS + Hermes uyumlu) ─────────────────
 
 function b64decode(b64) {
-  // Buffer: RN'de her zaman var, atob'dan daha güvenli
+  // 1) Buffer: React Native / Node ortamı
   if (typeof Buffer !== 'undefined') {
-    try {
-      return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    } catch(e) {}
+    try { return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); } catch(e) {}
   }
-  // atob: RN 0.73+ ve tarayıcı
+
+  // 2) Pure-JS base64 → UTF-8 byte dizisi → string
+  //    atob() sadece Latin-1 byteları döndürür; UTF-8 çok-baytlı
+  //    karakterleri doğru okumak için byteları manuel decode ediyoruz.
+  try {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    var s = b64.replace(/[\r\n ]/g, '');
+    // padding olmadan uzunluk 4ün katı olmayabilir, normalize et
+    while (s.length % 4) s += '=';
+
+    // base64 → byte array
+    var bytes = [];
+    for (var i = 0; i < s.length; i += 4) {
+      var e1 = chars.indexOf(s[i]),
+          e2 = chars.indexOf(s[i+1]),
+          e3 = s[i+2] === '=' ? 0 : chars.indexOf(s[i+2]),
+          e4 = s[i+3] === '=' ? 0 : chars.indexOf(s[i+3]);
+      bytes.push((e1 << 2) | (e2 >> 4));
+      if (s[i+2] !== '=') bytes.push(((e2 & 15) << 4) | (e3 >> 2));
+      if (s[i+3] !== '=') bytes.push(((e3 &  3) << 6) | e4);
+    }
+
+    // UTF-8 byte dizisi → JS string
+    var out = '', j = 0;
+    while (j < bytes.length) {
+      var b = bytes[j++];
+      if (b < 0x80) {
+        out += String.fromCharCode(b);
+      } else if ((b & 0xE0) === 0xC0) {
+        out += String.fromCharCode(((b & 0x1F) << 6) | (bytes[j++] & 0x3F));
+      } else if ((b & 0xF0) === 0xE0) {
+        var b2 = bytes[j++], b3 = bytes[j++];
+        out += String.fromCharCode(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+      } else {
+        // 4-byte (emoji vb.) — surrogate pair
+        var b2 = bytes[j++], b3 = bytes[j++], b4 = bytes[j++];
+        var cp = (((b & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000;
+        out += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF));
+      }
+    }
+    return JSON.parse(out);
+  } catch(e) {}
+
+  // 3) Son çare: atob + escape trick (ASCII-only base64 için çalışır)
   if (typeof atob !== 'undefined') {
+    try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch(e) {}
     try { return JSON.parse(atob(b64)); } catch(e) {}
   }
+
   return null;
 }
 
@@ -176,8 +295,8 @@ function scoreItem(item, titleEn, titleTr, year) {
  */
 function fetchYearFromPage(item, mediaType) {
   var type = mediaType === 'movie' ? 'film' : 'dizi';
-  var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug);
-  // İlk 60KB'da badge-date-text bulunabilir
+  var url  = BASE_URL + '/' + type + '/' + encPath(item.id) + '/' + encPath(item.slug) + '?ajax=page';
+  // İlk 60KBda badge-date-text bulunabilir
   return getHtml(url, { 'Range': 'bytes=0-61440' })
     .then(function(html) {
       var m = html.match(/badge-date-text[^>]*>[^<]*((?:19[89]|20[0-3])\d)/i);
@@ -272,7 +391,7 @@ function fetchGlobalEpNo(tmdbId, seasonNum, episodeNum) {
   });
 }
 
-// ── 4. HTML → embed URL'leri ─────────────────────────────────
+// ── 4. HTML → embed URLleri ─────────────────────────────────
 
 function parseEmbeds(html) {
   // A: window.__embeds_b64 = 'BASE64'
@@ -298,12 +417,12 @@ function parseEmbeds(html) {
     } catch(e) {}
   }
 
-  // C: Script içinden embed URL'leri
+  // C: Script içinden embed URLleri
   var urls = [], seen = {};
   var scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   var sm;
   while ((sm = scriptRe.exec(html)) !== null) {
-    var urlRe = /["'`]((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'`\s<>]+|my\.mail\.ru\/video\/embed\/[^"'`\s<>]+|www\.mp4upload\.com\/embed-[^"'`\s<>]+|vidmoly\.to\/e\/[^"'`\s<>]+|ok\.ru\/videoembed\/[^"'`\s<>]+|vk\.com\/video_ext[^"'`\s<>]+))/gi;
+    var urlRe = /["']((?:https?:)?\/\/(?:video\.sibnet\.ru\/shell\.php[^"'\s<>]+|my\.mail\.ru\/video\/embed\/[^"'\s<>]+|www\.mp4upload\.com\/embed-[^"'\s<>]+|vidmoly\.to\/e\/[^"'\s<>]+|ok\.ru\/videoembed\/[^"'\s<>]+|vk\.com\/video_ext[^"'\s<>]+))/gi;
     var um;
     while ((um = urlRe.exec(sm[1])) !== null) {
       var u = um[1];
@@ -338,7 +457,7 @@ function isVideoUrl(url) {
 
 function extractSibnet(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/' })
+  return getHtml(full, { 'Referer': 'https://video.sibnet.ru/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/player\.src\s*\(\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+\.mp4)["']/i)
            || html.match(/["']((?:https?:\/\/video\.sibnet\.ru)?\/v\/[^"']+\.mp4)["']/i);
@@ -350,7 +469,7 @@ function extractSibnet(url) {
 
 function extractVidmoly(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
@@ -359,7 +478,7 @@ function extractVidmoly(url) {
 
 function extractMp4upload(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?:\/\/[^"']+)["']/i)
            || html.match(/[,\{]\s*file\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)/i);
@@ -376,7 +495,7 @@ function extractMp4upload(url) {
 
 function extractMailRu(url) {
   var full = toAbs(url);
-  return getHtml(full, { 'Referer': BASE_URL + '/' })
+  return getHtml(full, { 'Referer': BASE_URL + '/', 'Range': 'bytes=0-98303' })
     .then(function(html) {
       var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
       return m ? { url: m[1], type: 'hls', headers: { 'Referer': full } } : null;
@@ -389,7 +508,7 @@ function extractStream(url) {
   var lo   = full.toLowerCase();
   if (lo.indexOf('sibnet')    !== -1) return extractSibnet(url);
   if (lo.indexOf('vidmoly')   !== -1) return extractVidmoly(url);
-  if (lo.indexOf('mp4upload') !== -1) return extractMp4upload(url);
+  if (lo.indexOf('mp4upload') !== -1) { log('mp4upload atlandı'); return Promise.resolve(null); }
   if (lo.indexOf('mail.ru')   !== -1) return extractMailRu(url);
   log('Desteklenmeyen embed: ' + full.slice(0, 60));
   return Promise.resolve(null);
@@ -400,8 +519,41 @@ function extractStream(url) {
 function buildEpUrl(item, mediaType, epGlobalNo) {
   if (mediaType === 'movie')
     return BASE_URL + '/film/' + encPath(item.id) + '/' + encPath(item.slug);
+  // Temel URL — epSlug olmadan, site 301 ile doğru sluga yönlendirir
   return BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug)
-       + '/' + epGlobalNo + '/-';
+       + '/' + epGlobalNo;
+}
+
+// ajax=episodes JSONundan globalNoya karşılık gelen bölüm URLini bul
+function fetchEpUrl(item, epGlobalNo) {
+  var diziUrl = BASE_URL + '/dizi/' + encPath(item.id) + '/' + encPath(item.slug);
+  var jsonUrl = diziUrl + '?ajax=episodes&diziid=' + encPath(item.id);
+
+  return fetch(jsonUrl, { headers: HEADERS })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(j) {
+      if (j && j.all) {
+        var ep = j.all[epGlobalNo - 1];
+        if (ep && ep.link) {
+          var found = BASE_URL + ep.link;
+          log('epUrl: ' + found);
+          return found;
+        }
+        // display_id ile eşleştir (sıra garantili değilse)
+        for (var i = 0; i < j.all.length; i++) {
+          if (j.all[i].display_id === epGlobalNo) {
+            var found2 = BASE_URL + j.all[i].link;
+            log('epUrl JSON display_id ile: ' + found2);
+            return found2;
+          }
+        }
+      }
+      log('epUrl JSON dan bulunamadi, fallback');
+      return diziUrl + '/' + epGlobalNo + '/-';
+    })
+    .catch(function() {
+      return diziUrl + '/' + epGlobalNo + '/-';
+    });
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
@@ -425,25 +577,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         log('Eşleşti: "' + item.name + '" id=' + item.id + ' slug=' + item.slug);
 
-        var epUrl = buildEpUrl(item, mediaType, epGlobal);
+        var epUrlPromise = mediaType === 'tv'
+          ? fetchEpUrl(item, epGlobal)
+          : Promise.resolve(buildEpUrl(item, mediaType, epGlobal));
+
+        return epUrlPromise.then(function(epUrl) {
         log('Bölüm URL: ' + epUrl);
-
-        return getHtml(epUrl).then(function(html) {
-          // DIAGNOSTIC: OkHttp compression davranisi
-          var hasEmbed = html.indexOf('__embeds_b64') !== -1;
-          log('HTML: ' + html.length + ' chars | 256K: ' + (html.length < 262144 ? 'ALTINDA(gzip-raw?)' : 'USTUNDE') + ' | embeds_b64: ' + (hasEmbed ? 'VAR' : 'YOK'));
-
+        return getHtmlFull(epUrl);
+        }).then(function(html) {
           var embeds   = parseEmbeds(html);
           var srcNames = parseSourceNames(html);
 
           if (!embeds.length) {
-            log('Embed bulunamadi');
+            log('Embed bulunamadı');
             return [];
           }
-          log(embeds.length + ' embed: ' + embeds.slice(0,2).join(', '));
+          var topEmbeds = embeds.slice(0, 3);
+          log(embeds.length + ' embed, ilk ' + topEmbeds.length + ' alınıyor: ' + topEmbeds.join(', '));
 
           return Promise.all(
-            embeds.map(function(embedUrl, idx) {
+            topEmbeds.map(function(embedUrl, idx) {
               return extractStream(embedUrl).then(function(stream) {
                 if (!stream) return null;
                 var srcName = srcNames[idx] || ('Kaynak ' + idx);
