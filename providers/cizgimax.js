@@ -1,6 +1,5 @@
 // ============================================================
 //  CizgiMax — Nuvio Provider
-//  HTML
 // ============================================================
 
 var MAIN_URL     = 'https://cizgimax.online';
@@ -50,7 +49,7 @@ function findBestMatch(results, en, tr) {
   var best = null, bestScore = 0;
 
   results.forEach(function(r) {
-    if (r.kind === 'film') return; 
+    if (r.kind === 'film') return;
     var ni = normalizeStr(r.name), sc = 0;
     if (ni === nEn || ni === nTr)                                        sc += 100;
     else if (nEn && (ni.indexOf(nEn) !== -1 || nEn.indexOf(ni) !== -1)) sc += 65;
@@ -78,41 +77,119 @@ function buildEpisodeUrl(diziUrl, season, episode) {
   return MAIN_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
 }
 
-// ── Doğrudan API Linkini Düzenleyip Pasla ─────────────────────
+// ── Stream linkini streaming ile çek (256KB sınırını aşmaz) ──
 function fetchEpisodeStreams(epUrl) {
   return fetch(epUrl, { headers: HEADERS })
-    .then(function(r) { return r.text(); })
-    .then(function(html) {
-      var results = [];
-      
-      var linkRe = /href=["']([^"']+)["'][^>]*>([\s\S]*?<\/a>)/gi;
-      var match;
-      while ((match = linkRe.exec(html)) !== null) {
-        if (match[2].indexOf('İndir') !== -1) {
-          var rawUrl = match[1];
-          var fullUrl = rawUrl.startsWith('http') ? rawUrl : MAIN_URL + rawUrl;
-          
-          // 1. Linkteki bozuk &amp; yapılarını temiz temiz & yapıyoruz
-          fullUrl = fullUrl.replace(/&amp;/g, '&');
-          
-          // 2. Tam istediğin gibi /indir/ kısmını /api/indir/ yapıyoruz
-          var apiUrl = fullUrl.replace('/indir/', '/api/indir/');
-          
-          var label = match[2].indexOf('Direkt') !== -1 ? 'Direkt İndir' : 'Alternatif İndir';
-          
-          results.push({
-            name:    'CizgiMax',
-            title:   '⌜ CİZGİMAX ⌟ | ' + label,
-            url:     apiUrl, // Nuvio'ya doğrudan tertemiz /api/indir/ linkini veriyoruz
-            quality: 'Auto',
-            headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
-          });
-        }
+    .then(function(r) {
+      // Streaming destekleniyorsa ReadableStream kullan
+      if (r.body && r.body.getReader) {
+        return extractStreamUrlFromBody(r.body, epUrl);
       }
-
-      return results;
+      // Fallback: streaming yoksa tüm text'i oku
+      return r.text().then(function(html) {
+        return parseStreamTokens(html, epUrl);
+      });
     })
     .catch(function() { return []; });
+}
+
+// ── ReadableStream ile token avı ─────────────────────────────
+function extractStreamUrlFromBody(body, epUrl) {
+  return new Promise(function(resolve) {
+    var reader  = body.getReader();
+    var decoder = new TextDecoder();
+    var buffer  = '';
+    var results = [];
+
+    // Token regex'leri — birden fazla provider olabilir
+    var PATTERNS = [
+      // /api/stream/sibnet?t=...
+      { re: /\/api\/stream\/sibnet\?t=([\w\-\.]+)/g, label: 'Sibnet' },
+      // /api/stream/... genel
+      { re: /\/api\/stream\/[\w]+\?t=([\w\-\.]+)/g,  label: 'Stream' }
+    ];
+
+    function pump() {
+      reader.read().then(function(chunk) {
+        if (chunk.done) {
+          // Akış bitti, son buffer'ı tara
+          results = results.concat(parseStreamTokens(buffer, epUrl));
+          resolve(dedupe(results));
+          return;
+        }
+
+        buffer += decoder.decode(chunk.value, { stream: true });
+
+        // Her pattern için kontrol et
+        PATTERNS.forEach(function(p) {
+          var m;
+          p.re.lastIndex = 0;
+          while ((m = p.re.exec(buffer)) !== null) {
+            var fullUrl = MAIN_URL + m[0].replace(/&amp;/g, '&');
+            results.push({
+              name:    'CizgiMax',
+              title:   '⌜ CİZGİMAX ⌟ | ' + p.label,
+              url:     fullUrl,
+              quality: 'Auto',
+              headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+            });
+          }
+        });
+
+        // Yeterli sonuç bulduk — gerisini okuma
+        if (results.length >= 2) {
+          reader.cancel();
+          resolve(dedupe(results));
+          return;
+        }
+
+        // Buffer'ı temizle; regex sınırda kaçmasın diye son 512 char'ı koru
+        if (buffer.length > 32768) {
+          buffer = buffer.slice(-512);
+        }
+
+        pump();
+      }).catch(function() {
+        resolve(dedupe(results));
+      });
+    }
+
+    pump();
+  });
+}
+
+// ── Düz HTML'den token parse et (fallback) ───────────────────
+function parseStreamTokens(html, epUrl) {
+  var results = [];
+  var PATTERNS = [
+    { re: /\/api\/stream\/sibnet\?t=([\w\-\.]+)/g, label: 'Sibnet' },
+    { re: /\/api\/stream\/[\w]+\?t=([\w\-\.]+)/g,  label: 'Stream' }
+  ];
+  PATTERNS.forEach(function(p) {
+    var m;
+    p.re.lastIndex = 0;
+    while ((m = p.re.exec(html)) !== null) {
+      var fullUrl = MAIN_URL + m[0].replace(/&amp;/g, '&');
+      results.push({
+        name:    'CizgiMax',
+        title:   '⌜ CİZGİMAX ⌟ | ' + p.label,
+        url:     fullUrl,
+        quality: 'Auto',
+        headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+      });
+    }
+  });
+  return results;
+}
+
+// ── Duplicate URL temizle ─────────────────────────────────────
+function dedupe(arr) {
+  var seen = {};
+  return arr.filter(function(item) {
+    if (seen[item.url]) return false;
+    seen[item.url] = true;
+    return true;
+  });
 }
 
 // ── Ana fonksiyon ─────────────────────────────────────────────
