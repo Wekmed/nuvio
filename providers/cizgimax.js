@@ -1,7 +1,6 @@
 // ============================================================
 //  CizgiMax — Nuvio Provider (watchbuddy.tv API üzerinden)
 // ============================================================
-// ============================================================
 
 var BASE_URL     = 'https://stream.watchbuddy.tv';
 var PLUGIN_NAME  = 'CizgiMax';
@@ -50,15 +49,37 @@ function decodeHtmlEntities(str) {
 
 function fetchTmdbInfo(tmdbId, mediaType) {
   var ep = (mediaType === 'movie') ? 'movie' : 'tv';
-  return fetch('https://api.themoviedb.org/3/' + ep + '/' + tmdbId
-    + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      return {
-        titleTr: d.title || d.name || '',
-        titleEn: d.original_title || d.original_name || ''
-      };
+  var baseUrl = 'https://api.themoviedb.org/3/' + ep + '/' + tmdbId;
+
+  // TR bilgisi + EN bilgisi + alternatif isimler paralel cek
+  return Promise.all([
+    fetch(baseUrl + '?api_key=' + TMDB_API_KEY + '&language=tr-TR').then(function(r) { return r.json(); }),
+    fetch(baseUrl + '?api_key=' + TMDB_API_KEY + '&language=en-US').then(function(r) { return r.json(); }),
+    fetch(baseUrl + '/alternative_titles?api_key=' + TMDB_API_KEY).then(function(r) { return r.json(); }).catch(function() { return {}; })
+  ]).then(function(res) {
+    var tr = res[0], en = res[1], alt = res[2];
+
+    var titleTr = tr.title || tr.name || '';
+    var titleEn = en.title || en.name || '';
+
+    // Alternatif isimler icinden sadece TR ve EN olanlari al
+    var altTitles = [];
+    var items = alt.titles || alt.results || [];
+    items.forEach(function(a) {
+      var iso = (a.iso_3166_1 || '').toUpperCase();
+      if ((iso === 'TR' || iso === 'US' || iso === 'GB') && a.title) {
+        altTitles.push(a.title);
+      }
     });
+
+    // titleTr ve titleEn zaten listede varsa tekrar ekleme
+    [titleTr, titleEn].forEach(function(t) {
+      if (t && altTitles.indexOf(t) === -1) altTitles.unshift(t);
+    });
+
+    console.log('[CizgiMax] Basliklar: ' + altTitles.join(' / '));
+    return { titleTr: titleTr, titleEn: titleEn, altTitles: altTitles };
+  });
 }
 
 // ── Arama: watchbuddy /ara/CizgiMax ──────────────────────────
@@ -211,19 +232,24 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         return [];
       }
 
-      return searchSite(titleEn || titleTr)
-        .then(function(results) {
-          console.log('[CizgiMax] Arama (' + (titleEn || titleTr) + '): ' + results.length + ' sonuc');
-          var best = findBestMatch(results, titleEn, titleTr);
+      // altTitles listesindeki her isimle sırayla ara, ilk eslesende dur
+      var altTitles = info.altTitles || [titleEn, titleTr].filter(Boolean);
+      var seen = {};
+      var uniqueTitles = altTitles.filter(function(t) {
+        if (!t || seen[t]) return false;
+        seen[t] = true;
+        return true;
+      });
 
-          if (!best && titleTr && titleTr !== titleEn) {
-            return searchSite(titleTr).then(function(r2) {
-              console.log('[CizgiMax] Arama TR (' + titleTr + '): ' + r2.length + ' sonuc');
-              return findBestMatch(r2, titleEn, titleTr);
-            });
-          }
-          return best;
-        })
+      return uniqueTitles.reduce(function(chain, query) {
+        return chain.then(function(best) {
+          if (best) return best;
+          return searchSite(query).then(function(results) {
+            console.log('[CizgiMax] Arama (' + query + '): ' + results.length + ' sonuc');
+            return findBestMatch(results, titleEn, titleTr);
+          });
+        });
+      }, Promise.resolve(null))
         .then(function(best) {
           if (!best) {
             console.log('[CizgiMax] Eslesme bulunamadi: ' + (titleEn || titleTr));
