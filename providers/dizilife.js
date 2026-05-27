@@ -1,5 +1,6 @@
 /**
  * DiziLife Provider for Nuvio
+ * Saf JS AES-CBC (require('crypto') YOK - Nuvio uyumlu)
  */
 "use strict";
 
@@ -185,24 +186,35 @@ function decodeObf(s){
 }
 
 function decryptPlayerPage(html){
-  // _XXXXXXXX=_YYYYYYYY("BASE64") pattern
+  // 1. Direkt m3u8 URL var mı?
+  var directM = html.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)['"]/i);
+  if(directM) return directM[1];
+
+  // 2. CDN URL: one.xxxxx.click/{token}/... formatı
+  var cdnM = html.match(/["'](https?:\/\/[^"']+\.click\/[A-Za-z0-9_-]+\/[^"']+\.m3u8[^"']*)['"]/i)
+           ||html.match(/["'](https?:\/\/[^"']+\.click\/[^"']+)['"]/i);
+  if(cdnM) return cdnM[1];
+
+  // 3. Obfuscated AES decrypt (eski yöntem - fallback)
   var matches=[];
   var re=/_[a-f0-9]{8}=_[a-f0-9]{8}\("([A-Za-z0-9+/=]{20,})"\)/g;
   var m;
   while((m=re.exec(html))!==null)matches.push(m[1]);
-  if(matches.length<3){console.error("[DiziLife] obf var bulunamadi:"+matches.length);return null;}
+  if(matches.length<3){
+    console.error("[DiziLife] obf var bulunamadi:"+matches.length);
+    return null;
+  }
 
   var sorted=matches.slice().sort(function(a,b){return b.length-a.length;});
   var cipherB64 =decodeObf(sorted[0]);
   var passphrase=decodeObf(sorted[2]);
   var replaceDst=decodeObf(sorted[1]);
 
-  // join pattern'ından replace_src bul
   var replaceSrc="?aztsdxdevfqwea";
   var joinM=html.match(/\[([^\]]+)\]\.join\(''\)/);
   if(joinM){try{replaceSrc=joinM[1].split(",").map(function(s){return s.replace(/['"]/g,"").trim();}).join("");}catch(e){}}
 
-  console.log("[DiziLife] decrypt: passphrase="+passphrase.substring(0,8)+"...");
+  console.log("[DiziLife] AES decrypt: passphrase="+passphrase.substring(0,8)+"...");
   try{
     var decrypted=cryptoJsDecrypt(cipherB64,passphrase);
     if(replaceDst&&replaceSrc)decrypted=decrypted.split(replaceSrc).join(replaceDst);
@@ -290,13 +302,25 @@ function getStreams(tmdbId,mediaType,season,episode){
     .then(function(result){
       if(!result){console.warn("[DiziLife] bulunamadi");return[];}
       console.log("[DiziLife] player="+result.playerUrl);
-      return get(result.playerUrl,result.pageUrl)
-        .then(function(playerHtml){
-          var m3u8=decryptPlayerPage(playerHtml);
-          if(!m3u8){console.warn("[DiziLife] m3u8 cozulemedi");return[];}
-          console.log("[DiziLife] m3u8="+m3u8.substring(0,80)+"...");
-          return[{name:"DiziLife",title:"DiziLife",url:m3u8,quality:"1080p",headers:hdrs}];
-        });
+      var playerUrl = result.playerUrl;
+      var tokenM = playerUrl.match(/\/player\/([A-Za-z0-9_-]+)/);
+      var token = tokenM ? tokenM[1] : null;
+
+      if (!token) { console.warn("[DiziLife] token alinamadi"); return []; }
+
+      // Token aynı, domain farklı:
+      // /player/{token} → one.82b6b2a6748f1e.click/{token}/master.m3u8
+      var CDN = "https://one.82b6b2a6748f1e.click";
+      var m3u8 = CDN + "/" + token + "/master.m3u8";
+      console.log("[DiziLife] CDN m3u8=" + m3u8);
+
+      return [{
+        name:    "DiziLife",
+        title:   "DiziLife",
+        url:     m3u8,
+        quality: "1080p",
+        headers: hdrs,
+      }];
     })
     .catch(function(err){console.error("[DiziLife] "+err.message);return[];});
 }
