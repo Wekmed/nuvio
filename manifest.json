@@ -171,6 +171,23 @@
       "limited": false,
       "disabledPlatforms": []
     },
+        {
+      "id": "diziyo",
+      "name": "Diziyo",
+      "description": "Türkçe dublaj ve altyazılı diziler.",
+      "version": "1.0.0",
+      "author": "nuvio: Wekmed",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/diziyo.js",
+      "enabled": true,
+      "contentLanguage": [
+        "tr"
+      ],
+      "limited": false,
+      "disabledPlatforms": []
+    },
     {
       "id": "fullhdfilmizlesene",
       "name": "FullHDFilmizlesene",
