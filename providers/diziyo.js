@@ -1,13 +1,12 @@
 /**
- * DiziYo Provider for Nuvio
-
+ * DiziYo Provider
  */
 
 "use strict";
 
 var BASE_URL   = "https://www.diziyo.so";
 var PLAYER_URL = "https://www.dzyhd.site";
-var TMDB_KEY   = "c4ffcab48dfaa7b41625ac13d61aec31";
+var TMDB_KEY   = "500330721680edb6d5f7f12ba7cd9023";
 var UA         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
@@ -298,10 +297,57 @@ function tryUrl(url) {
     .catch(function() { return null; });
 }
 
+// Sayfayı fetch et, dzn-player-tabs içindeki tüm tab URL'lerini çıkar
+// Sonra her tab'dan iframe URL'sini al
+function getVersionsFromPage(url) {
+  return get(url, BASE_URL + "/")
+    .then(function(html) {
+      // dzn-player-tabs içindeki tüm <a href> + dzn-flag class çiftlerini çıkar
+      var tabsBlock = html.match(/id="dznPlayerTabs"[^>]*>([\s\S]*?)<\/div>/);
+      if (!tabsBlock) return null;
+
+      var tabs = [];
+      var tabRe = /<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?dzn-flag\s+(trsub|trdub|ensub)[^"]*[\s\S]*?<\/a>/g;
+      var m;
+      while ((m = tabRe.exec(tabsBlock[1])) !== null) {
+        tabs.push({ url: m[1], type: m[2] });
+      }
+
+      // Hiç tab bulunamadıysa ana flag'e bak
+      if (tabs.length === 0) {
+        var flagM = tabsBlock[1].match(/dzn-flag\s+(trsub|trdub|ensub)/);
+        var hrefM = tabsBlock[1].match(/href="([^"]+)"/);
+        if (flagM && hrefM) tabs.push({ url: hrefM[1], type: flagM[1] });
+      }
+
+      // Hâlâ boşsa en azından ana URL'yi ekle
+      if (tabs.length === 0) tabs.push({ url: url, type: "unknown" });
+
+      console.log("[DiziYo] Tabs bulundu: " + tabs.map(function(t){return t.type;}).join(", "));
+
+      // Her tab'dan iframe çek
+      var promises = tabs.map(function(tab) {
+        return get(tab.url, BASE_URL + "/")
+          .then(function(tabHtml) {
+            var iframe = extractIframeUrl(tabHtml);
+            if (!iframe) return null;
+            return { pageUrl: tab.url, iframeUrl: iframe, type: tab.type };
+          })
+          .catch(function() { return null; });
+      });
+
+      return Promise.all(promises).then(function(results) {
+        return results.filter(Boolean);
+      });
+    })
+    .catch(function() { return null; });
+}
+
 function tryUrls(urls, idx) {
-  if (idx >= urls.length) return Promise.resolve(null);
-  return tryUrl(urls[idx]).then(function(r) {
-    return r || tryUrls(urls, idx + 1);
+  if (idx >= urls.length) return Promise.resolve([]);
+  return getVersionsFromPage(urls[idx]).then(function(found) {
+    if (found && found.length > 0) return found;
+    return tryUrls(urls, idx + 1);
   });
 }
 
@@ -395,39 +441,54 @@ function getStreams(tmdbId, mediaType, season, episode) {
       });
 
       return tryUrls(allUrls, 0)
-        .then(function(r) {
-          if (r) return r;
+        .then(function(results) {
+          if (results.length > 0) return results;
           // Arama yap
           return searchSlug(info, mediaType).then(function(found) {
-            if (!found) return null;
+            if (!found) return [];
             console.log("[DiziYo] Arama: " + found);
-            return tryUrls(buildUrls(found), 0).then(function(r2) {
-              if (r2) return r2;
-              // Dizi sayfasından bölüm listesine bak
+            return tryUrls(buildUrls(found), 0).then(function(results2) {
+              if (results2.length > 0) return results2;
               if (mediaType !== "movie") {
-                return findEpisodeFromShowPage(found, season, episode);
+                return findEpisodeFromShowPage(found, season, episode)
+                  .then(function(r) { return r ? [r] : []; });
               }
-              return null;
+              return [];
             });
           });
         });
     })
-    .then(function(result) {
-      if (!result) { console.warn("[DiziYo] bulunamadi"); return []; }
-      console.log("[DiziYo] iframe=" + result.iframeUrl);
+    .then(function(results) {
+      if (!results || results.length === 0) { console.warn("[DiziYo] bulunamadi"); return []; }
 
-      return getM3u8FromApi(result.iframeUrl, result.pageUrl)
-        .then(function(m3u8) {
-          if (!m3u8) { console.warn("[DiziYo] m3u8 bulunamadi"); return []; }
-          console.log("[DiziYo] m3u8=" + m3u8.substring(0, 80) + "...");
-          return [{
-            name:    "DiziYo",
-            title:   "DiziYo",
-            url:     m3u8,
-            quality: "1080p",
-            headers: hdrs,
-          }];
-        });
+      // Her versiyondan stream çek
+      var promises = results.map(function(result, idx) {
+        var isDub = (result.type === "trdub"); // type'a göre belirle
+        console.log("[DiziYo] iframe[" + idx + "]=" + result.iframeUrl);
+        return getM3u8FromApi(result.iframeUrl, result.pageUrl)
+          .then(function(m3u8) {
+            if (!m3u8) return null;
+            console.log("[DiziYo] m3u8[" + idx + "]=" + m3u8.substring(0, 60) + "...");
+            var titleMap = {
+              "trdub": "DiziYo - Turkce Dublaj",
+              "trsub": "DiziYo - Turkce Altyazili",
+              "ensub": "DiziYo - Ingilizce Altyazili",
+              "unknown": "DiziYo",
+            };
+            return {
+              name:    "DiziYo",
+              title:   titleMap[result.type] || "DiziYo",
+              url:     m3u8,
+              quality: "1080p",
+              headers: hdrs,
+            };
+          })
+          .catch(function() { return null; });
+      });
+
+      return Promise.all(promises).then(function(streams) {
+        return streams.filter(Boolean);
+      });
     })
     .catch(function(err) {
       console.error("[DiziYo] " + err.message);
