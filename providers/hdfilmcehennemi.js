@@ -1,7 +1,5 @@
 // ============================================================
 //  HDFilmCehennemi — Nuvio Provider
-//
-
 // ============================================================
 
 var TMDB_API_KEY   = '500330721680edb6d5f7f12ba7cd9023';
@@ -198,6 +196,16 @@ function pickBest(results, titleTr, titleEn, year, mediaType) {
     if (nt === nTr || nt === nEn)                               score += 50;
     else if (nt.indexOf(nTr) !== -1 || nt.indexOf(nEn) !== -1) score += 20;
     else if (nh.indexOf(nTr) !== -1 || nh.indexOf(nEn) !== -1) score += 10;
+    // "The Godfather" → "godfather" prefix eşleşmesi (the, a, bir gibi article'lar)
+    var nTrNoArt = nTr.replace(/^(the|a|bir|el|le|la|les|les|die|der|das)/, '');
+    var nEnNoArt = nEn.replace(/^(the|a|bir|el|le|la|les|les|die|der|das)/, '');
+    if (nTrNoArt && (nt.indexOf(nTrNoArt) !== -1 || nh.indexOf(nTrNoArt) !== -1)) score += 15;
+    if (nEnNoArt && (nt.indexOf(nEnNoArt) !== -1 || nh.indexOf(nEnNoArt) !== -1)) score += 15;
+    // "Godfather 1" gibi sayı suffix'i - sonundaki rakamları sil ve tekrar dene
+    var nTrNoNum = nTr.replace(/\d+$/, '').replace(/[ivx]+$/, '');
+    var nEnNoNum = nEn.replace(/\d+$/, '').replace(/[ivx]+$/, '');
+    if (nTrNoNum && nTrNoNum !== nTr && nt.indexOf(nTrNoNum) !== -1) score += 10;
+    if (nEnNoNum && nEnNoNum !== nEn && nt.indexOf(nEnNoNum) !== -1) score += 10;
     if (year && r.year === year)                                score += 30;
     else if (year && r.year && Math.abs(parseInt(r.year||0) - parseInt(year)) <= 1) score += 10;
     return { r: r, score: score };
@@ -206,8 +214,39 @@ function pickBest(results, titleTr, titleEn, year, mediaType) {
   return scored[0].r.href;
 }
 
+
+// ── Sayfa HTML'ini çek (?router=1 ile) ───────────────────────
+function fetchPageHtml(pageUrl) {
+  var routerUrl = pageUrl + (pageUrl.indexOf('?') === -1 ? '?router=1' : '&router=1');
+  var hdrs = Object.assign({}, SEARCH_HEADERS, { 'Referer': pageUrl });
+  return fetch(routerUrl, { headers: hdrs })
+    .then(function(r) {
+      if (!r.ok) throw new Error('router HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(json) {
+      return json.html || json.data || '';
+    })
+    .catch(function() {
+      return fetch(pageUrl, { headers: Object.assign({}, PAGE_HEADERS, { 'Referer': PRIMARY_DOMAIN + '/' }) })
+        .then(function(r) { return r.ok ? r.text() : ''; })
+        .catch(function() { return ''; });
+    });
+}
+
 function buildEpisodeUrl(url, s, e) {
-  return url.replace(/\/$/, '') + '/' + s + '-sezon-' + e + '-bolum/';
+  // Placeholder - gerçek URL sayfa parse ile bulunacak
+  return url.replace(/\/$/, '') + '/sezon-' + s + '/bolum-' + e + '-hd1/';
+}
+
+function parseEpisodeLinks(html) {
+  // /dizi/{slug}/sezon-{S}/bolum-{E}-{suffix}/ linklerini topla
+  var eps = {}, re = /href="(https?:\/\/[^"]+\/dizi\/[^"]+\/sezon-(\d+)\/bolum-(\d+)-[^"\/]+\/)"/gi, m;
+  while ((m = re.exec(html)) !== null) {
+    var key = parseInt(m[2]) + '_' + parseInt(m[3]);
+    if (!eps[key]) eps[key] = { url: m[1], season: parseInt(m[2]), episode: parseInt(m[3]) };
+  }
+  return eps;
 }
 
 // ── Altyazı parse ─────────────────────────────────────────────
@@ -834,7 +873,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!pageUrl) return [];
 
         if (mediaType === 'tv' && season && episode) {
-          pageUrl = buildEpisodeUrl(pageUrl, parseInt(season), parseInt(episode));
+          var sNum = parseInt(season), eNum = parseInt(episode);
+          // Dizi ana sayfasından bölüm URL'ini bul
+          return fetchPageHtml(pageUrl)
+            .then(function(diziHtml) {
+              var eps = parseEpisodeLinks(diziHtml);
+              var key = sNum + '_' + eNum;
+              var epUrl = eps[key] ? eps[key].url : buildEpisodeUrl(pageUrl, sNum, eNum);
+              console.log('[HDFC] Bölüm URL: ' + epUrl);
+              return fetchStreamsFromPage(domain, epUrl);
+            });
         }
 
         console.log('[HDFC] URL: ' + pageUrl);
