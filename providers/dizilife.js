@@ -4,7 +4,7 @@
  */
 "use strict";
 
-var BASE_URL = "https://dizi63.life";
+var BASE_URL = "https://dizi64.life";
 var TMDB_KEY = "500330721680edb6d5f7f12ba7cd9023";
 var UA       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
