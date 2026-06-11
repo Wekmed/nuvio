@@ -1,13 +1,6 @@
 // ============================================================
 //  Cizgimax — Nuvio Provider
 //  Site: https://cizgimax.online
-//
-//  Akış:
-//  1) TMDB'den başlık al
-//  2) /api/search/suggest/?q={baslik} → slug bul
-//  3) /{slug}-{s}-sezon-{e}-bolum-izle/ → HTML fetch
-//  4) var servers = JSON.parse(atob("...")) → sunucuları çöz
-//  5) Sibnet: proxy URL'i direkt dön (Nuvio player 302'yi takip eder)
 // ============================================================
 
 var BASE_URL     = 'https://cizgimax.online';
@@ -20,6 +13,21 @@ var HEADERS = {
   'Referer': BASE_URL + '/'
 };
 
+// ── Pure-JS Base64 decode (Hermes'te atob yok) ───────────────
+var _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function b64decode(str) {
+  var s = str.replace(/=/g, '');
+  var out = '';
+  for (var i = 0; i < s.length; i += 4) {
+    var n = (_B64.indexOf(s[i])   << 18) | (_B64.indexOf(s[i+1]) << 12)
+          | (_B64.indexOf(s[i+2]) <<  6) |  _B64.indexOf(s[i+3]);
+    out += String.fromCharCode((n >> 16) & 0xFF);
+    if (s[i+2] !== undefined) out += String.fromCharCode((n >> 8) & 0xFF);
+    if (s[i+3] !== undefined) out += String.fromCharCode(n & 0xFF);
+  }
+  return out;
+}
+
 // ── TMDB ─────────────────────────────────────────────────────
 function fetchTmdbInfo(tmdbId, mediaType) {
   var endpoint = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -29,13 +37,12 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     .then(function(d) {
       return {
         titleTr: d.name  || d.title  || '',
-        titleEn: d.original_name || d.original_title || '',
-        year:    (d.first_air_date || d.release_date || '').slice(0, 4)
+        titleEn: d.original_name || d.original_title || ''
       };
     });
 }
 
-// ── Metin normalize ──────────────────────────────────────────
+// ── Normalize ────────────────────────────────────────────────
 function normalize(s) {
   return (s || '').toLowerCase()
     .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -43,7 +50,7 @@ function normalize(s) {
     .replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim();
 }
 
-// ── Arama → slug ────────────────────────────────────────────
+// ── Arama → slug ─────────────────────────────────────────────
 function searchAnime(titleTr, titleEn) {
   var query = titleTr || titleEn;
   return fetch(BASE_URL + '/api/search/suggest/?q=' + encodeURIComponent(query), {
@@ -52,65 +59,57 @@ function searchAnime(titleTr, titleEn) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     var items = data.animes || [];
-    if (!items.length) throw new Error('Cizgimax: anime bulunamadi');
+    if (!items.length) throw new Error('Cizgimax: bulunamadi');
 
-    var nTr = normalize(titleTr);
-    var nEn = normalize(titleEn);
+    var nTr = normalize(titleTr), nEn = normalize(titleEn);
     var best = items[0], bestScore = -1;
     items.forEach(function(item) {
-      var nItem = normalize(item.name);
-      var score = 0;
-      if (nItem === nTr || nItem === nEn) score = 100;
-      else if (nTr && nItem.indexOf(nTr) !== -1) score = 60;
-      else if (nEn && nItem.indexOf(nEn) !== -1) score = 60;
+      var n = normalize(item.name), score = 0;
+      if (n === nTr || n === nEn) score = 100;
+      else if (nTr && n.indexOf(nTr) !== -1) score = 60;
+      else if (nEn && n.indexOf(nEn) !== -1) score = 60;
       if (score > bestScore) { bestScore = score; best = item; }
     });
 
-    // /diziler/the-amazing-world-of-gumball-izle/ → the-amazing-world-of-gumball
     var urlSlug = (best.url || '')
       .replace(/^\/diziler\/|^\/film\//, '')
       .replace(/\/$/, '')
       .replace(/-izle$/, '');
 
-    console.log('[Cizgimax] Bulunan: ' + best.name + ' → slug=' + urlSlug);
-    return { id: best.id, slug: urlSlug, kind: best.kind, name: best.name };
+    console.log('[Cizgimax] ' + best.name + ' → ' + urlSlug);
+    return urlSlug;
   });
 }
 
-// ── Bölüm sayfası HTML'ini al ────────────────────────────────
+// ── Bölüm sayfası ────────────────────────────────────────────
 function fetchEpisodePage(slug, season, episode) {
   var url = BASE_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
-  console.log('[Cizgimax] Episode URL: ' + url);
-  return fetch(url, { headers: HEADERS })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    });
+  console.log('[Cizgimax] ' + url);
+  return fetch(url, { headers: HEADERS }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  });
 }
 
-// ── servers değişkenini parse et ─────────────────────────────
-// HTML: var servers = JSON.parse(atob("BASE64"));
+// ── servers parse — pure-JS base64 ───────────────────────────
 function parseServers(html) {
   var m = html.match(/var\s+servers\s*=\s*JSON\.parse\s*\(\s*atob\s*\(\s*["']([^"']+)["']\s*\)/);
-  if (!m) return [];
+  if (!m) { console.error('[Cizgimax] servers bulunamadi'); return []; }
   try {
-    return JSON.parse(atob(m[1])) || [];
+    var decoded = b64decode(m[1]);
+    return JSON.parse(decoded) || [];
   } catch(e) {
-    console.error('[Cizgimax] servers parse hata:', e.message);
+    console.error('[Cizgimax] parse hata: ' + e.message);
     return [];
   }
 }
 
-// ── Dil label'ından bayrak üret ──────────────────────────────
-// lang alanı null gelebilir, label'a bak
 function getLangStr(srv) {
   var label = (srv.label || '').toLowerCase();
-  var lang  = (srv.lang  || '').toLowerCase();
-  if (label.indexOf('altyaz') !== -1 || lang === 'sub') return '🌐 TR Altyazı';
-  return '🇹🇷 TR Dublaj';
+  return label.indexOf('altyaz') !== -1 ? '🌐 TR Altyazı' : '🇹🇷 TR Dublaj';
 }
 
-// ── Ana fonksiyon ────────────────────────────────────────────
+// ── Ana fonksiyon ─────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   if (mediaType !== 'tv') return Promise.resolve([]);
 
@@ -118,48 +117,35 @@ function getStreams(tmdbId, mediaType, season, episode) {
     .then(function(info) {
       var movieName = info.titleTr || info.titleEn;
       return searchAnime(info.titleTr, info.titleEn)
-        .then(function(anime) {
-          return fetchEpisodePage(anime.slug, season || 1, episode || 1);
+        .then(function(slug) {
+          return fetchEpisodePage(slug, season || 1, episode || 1);
         })
         .then(function(html) {
           var servers = parseServers(html);
-          console.log('[Cizgimax] ' + servers.length + ' sunucu bulundu');
+          console.log('[Cizgimax] ' + servers.length + ' sunucu');
 
           var streams = [];
-
           servers.forEach(function(srv) {
-            var langStr  = getLangStr(srv);
-            var titleStr = '⌜ CİZGİMAX ⌟ | ' + (srv.label || srv.type) + ' | ' + langStr;
-
-            // ── Sibnet ─────────────────────────────────────
-            // Proxy URL direkt dönülüyor — Nuvio player 302 redirect'i takip eder
-            // Token süreli ama episode sayfası fetch edildiği anda taze gelir
             if (srv.type === 'sibnet' && srv.streamUrl) {
               var proxyUrl = srv.streamUrl.startsWith('http')
-                ? srv.streamUrl
-                : BASE_URL + srv.streamUrl;
-
-              console.log('[Cizgimax] Sibnet proxy URL: ' + proxyUrl.slice(0, 80));
-
+                ? srv.streamUrl : BASE_URL + srv.streamUrl;
               streams.push({
                 url:     proxyUrl,
                 name:    movieName,
-                title:   titleStr,
+                title:   '⌜ CİZGİMAX ⌟ | Sibnet | ' + getLangStr(srv),
                 quality: '1080p',
                 type:    'direct',
-                headers: {
-                  'Referer':    BASE_URL + '/',
-                  'User-Agent': HEADERS['User-Agent']
-                }
+                headers: { 'Referer': BASE_URL + '/', 'User-Agent': HEADERS['User-Agent'] }
               });
             }
           });
 
+          console.log('[Cizgimax] ' + streams.length + ' stream döndü');
           return streams;
         });
     })
     .catch(function(e) {
-      console.error('[Cizgimax] hata:', e.message || e);
+      console.error('[Cizgimax] hata: ' + (e.message || e));
       return [];
     });
 }
