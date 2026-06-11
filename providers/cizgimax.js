@@ -1,319 +1,318 @@
 // ============================================================
-//  CizgiMax — Nuvio Provider (watchbuddy.tv API üzerinden)
+//  CizgiMax — Nuvio Provider.
 // ============================================================
 
-var BASE_URL     = 'https://stream.watchbuddy.tv';
-var PLUGIN_NAME  = 'CizgiMax';
-var PROXY_URL    = 'https://goproxy.watchbuddy.tv';
+var MAIN_URL     = 'https://cizgimax.online';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
   'User-Agent':      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
   'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-  'Referer':         BASE_URL + '/'
+  'Referer':         MAIN_URL + '/'
 };
 
 // ── Yardımcı ─────────────────────────────────────────────────
-
-function regexFirst(html, pattern, flags) {
-  var m = new RegExp(pattern, flags || 's').exec(html);
-  return m ? m[1] : null;
-}
-
-function regexAll(html, pattern, flags) {
-  var re = new RegExp(pattern, (flags || 's') + 'g');
-  var results = [], m;
-  while ((m = re.exec(html)) !== null) results.push(m);
-  return results;
-}
-
 function normalizeStr(s) {
   return (s || '').toLowerCase()
-    .replace(/[g]/g,'g').replace(/[u]/g,'u').replace(/[s]/g,'s')
-    .replace(/[i]/g,'i').replace(/[o]/g,'o').replace(/[c]/g,'c')
+    .replace(/[ğ]/g,'g').replace(/[ü]/g,'u').replace(/[ş]/g,'s')
+    .replace(/[ı]/g,'i').replace(/[İ]/g,'i').replace(/[ö]/g,'o').replace(/[ç]/g,'c')
     .replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim();
 }
 
-function decodeHtmlEntities(str) {
-  return (str || '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'");
-}
-
 // ── TMDB ─────────────────────────────────────────────────────
-
 function fetchTmdbInfo(tmdbId, mediaType) {
   var ep = (mediaType === 'movie') ? 'movie' : 'tv';
-  var baseUrl = 'https://api.themoviedb.org/3/' + ep + '/' + tmdbId;
-
-  // TR bilgisi + EN bilgisi + alternatif isimler paralel cek
-  return Promise.all([
-    fetch(baseUrl + '?api_key=' + TMDB_API_KEY + '&language=tr-TR').then(function(r) { return r.json(); }),
-    fetch(baseUrl + '?api_key=' + TMDB_API_KEY + '&language=en-US').then(function(r) { return r.json(); }),
-    fetch(baseUrl + '/alternative_titles?api_key=' + TMDB_API_KEY).then(function(r) { return r.json(); }).catch(function() { return {}; })
-  ]).then(function(res) {
-    var tr = res[0], en = res[1], alt = res[2];
-
-    var titleTr = tr.title || tr.name || '';
-    var titleEn = en.title || en.name || '';
-
-    // Alternatif isimler icinden sadece TR ve EN olanlari al
-    var altTitles = [];
-    var items = alt.titles || alt.results || [];
-    items.forEach(function(a) {
-      var iso = (a.iso_3166_1 || '').toUpperCase();
-      if ((iso === 'TR' || iso === 'US' || iso === 'GB') && a.title) {
-        altTitles.push(a.title);
-      }
+  return fetch('https://api.themoviedb.org/3/' + ep + '/' + tmdbId
+    + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      return {
+        titleTr: d.title || d.name || '',
+        titleEn: d.original_title || d.original_name || ''
+      };
     });
-
-    // titleTr ve titleEn zaten listede varsa tekrar ekleme
-    [titleTr, titleEn].forEach(function(t) {
-      if (t && altTitles.indexOf(t) === -1) altTitles.unshift(t);
-    });
-
-    console.log('[CizgiMax] Basliklar: ' + altTitles.join(' / '));
-    return { titleTr: titleTr, titleEn: titleEn, altTitles: altTitles };
-  });
 }
 
-// ── Arama: watchbuddy /ara/CizgiMax ──────────────────────────
-
+// ── Arama ─────────────────────────────────────────────────────
 function searchSite(query) {
-  var url = BASE_URL + '/ara/' + PLUGIN_NAME
-    + '?lang=tr&sorgu=' + encodeURIComponent(query);
-
-  return fetch(url, { headers: HEADERS })
-    .then(function(r) { return r.text(); })
-    .then(function(html) {
-      // watchbuddy aria-label kullanıyor (title degil)
-      var matches = regexAll(html, 'href="([^"]+icerik[^"]+)"[^>]*aria-label="([^"]+)"');
-      // Fallback: title attribute
-      if (!matches.length) {
-        matches = regexAll(html, 'class="poster-card[^"]*"[^>]+href="([^"]+)"[^>]+title="([^"]+)"');
-      }
-      return matches.map(function(m) {
-        return {
-          url:  decodeHtmlEntities(m[1]),
-          name: decodeHtmlEntities(m[2])
-        };
-      });
-    })
-    .catch(function() { return []; });
+  return fetch(MAIN_URL + '/api/search/suggest/?q=' + encodeURIComponent(query), {
+    headers: Object.assign({}, HEADERS, { 'Accept': 'application/json' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) { return d.animes || []; })
+  .catch(function() { return []; });
 }
 
-function findBestMatch(results, titleEn, titleTr) {
-  var nEn = normalizeStr(titleEn), nTr = normalizeStr(titleTr);
+function findBestMatch(results, en, tr) {
+  var nEn = normalizeStr(en), nTr = normalizeStr(tr);
   var best = null, bestScore = 0;
+
+  // Önce dizileri dene (kind !== 'film')
   results.forEach(function(r) {
+    if (r.kind === 'film') return;
     var ni = normalizeStr(r.name), sc = 0;
-    if (ni === nEn || ni === nTr)                                        sc = 100;
-    else if (nEn && (ni.indexOf(nEn) !== -1 || nEn.indexOf(ni) !== -1)) sc = 65;
-    else if (nTr && (ni.indexOf(nTr) !== -1 || nTr.indexOf(ni) !== -1)) sc = 60;
+    if (ni === nEn || ni === nTr)                                        sc += 100;
+    else if (nEn && (ni.indexOf(nEn) !== -1 || nEn.indexOf(ni) !== -1)) sc += 65;
+    else if (nTr && (ni.indexOf(nTr) !== -1 || nTr.indexOf(ni) !== -1)) sc += 60;
     if (sc > bestScore) { bestScore = sc; best = r; }
   });
+
+  // Bulamazsan filmleri de dene
+  if (!best) {
+    results.forEach(function(r) {
+      var ni = normalizeStr(r.name), sc = 0;
+      if (ni === nEn || ni === nTr) sc += 100;
+      else if (nEn && (ni.indexOf(nEn) !== -1 || nEn.indexOf(ni) !== -1)) sc += 65;
+      else if (nTr && (ni.indexOf(nTr) !== -1 || nTr.indexOf(ni) !== -1)) sc += 60;
+      if (sc > bestScore) { bestScore = sc; best = r; }
+    });
+  }
   return bestScore >= 55 ? best : null;
 }
 
-// ── İçerik sayfasından bölüm linkleri ────────────────────────
+// ── Bölüm URL oluştur ─────────────────────────────────────────
+function buildEpisodeUrl(diziUrl, season, episode) {
+  var m = diziUrl.match(/\/diziler\/(.+?)-izle\//);
+  if (!m) return null;
+  var slug = m[1];
+  return MAIN_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum-izle/';
+}
 
-function fetchContentPage(contentUrl) {
-  var encoded = encodeURIComponent(encodeURIComponent(contentUrl));
-  var pageUrl = BASE_URL + '/icerik/' + PLUGIN_NAME + '?url=' + encoded;
-
-  return fetch(pageUrl, { headers: HEADERS })
-    .then(function(r) { return r.text(); })
-    .then(function(html) {
-      var episodeLinks = regexAll(
-        html,
-        'href="(' + BASE_URL.replace(/\//g,'[/]') + '/izle/' + PLUGIN_NAME + '\\?[^"]*season=(\\d+)[^"]*episode=(\\d+)[^"]*)"'
-      );
-      return episodeLinks.map(function(m) {
-        return {
-          watchUrl: decodeHtmlEntities(m[1]),
-          season:   parseInt(m[2]),
-          episode:  parseInt(m[3])
-        };
+// ── Stream linkini streaming ile çek (256KB sınırını aşmaz) ──
+function fetchEpisodeStreams(epUrl) {
+  return fetch(epUrl, { headers: HEADERS })
+    .then(function(r) {
+      if (r.body && r.body.getReader) {
+        return extractStreamUrlFromBody(r.body, epUrl);
+      }
+      return r.text().then(function(html) {
+        return parseStreamTokens(html, epUrl);
       });
     })
     .catch(function() { return []; });
 }
 
-// ── Stream URL'lerini çek ─────────────────────────────────────
+// ── ReadableStream ile token avı ─────────────────────────────
+function extractStreamUrlFromBody(body, epUrl) {
+  return new Promise(function(resolve) {
+    var reader  = body.getReader();
+    var decoder = new TextDecoder();
+    var buffer  = '';
+    var results = [];
 
-function fetchStreams(watchUrl) {
-  return fetch(watchUrl, { headers: HEADERS })
-    .then(function(r) { return r.text(); })
-    .then(function(html) {
-      var results = [];
+    var PATTERNS = [
+      { re: /\/api\/stream\/sibnet\?t=([\w\-\.]+)/g, label: 'Sibnet'  },
+      { re: /\/api\/stream\/([\w]+)\?t=([\w\-\.]+)/g, label: 'Stream' }
+    ];
 
-      // 1. data-url attribute (ham HTML'de stream URL burada)
-      // <... data-url="https://cizgimax.online/api/stream/sibnet/?t=TOKEN" data-referer="...">
-      var dataUrl = regexFirst(html, 'data-url="(https://cizgimax\\.online/api/stream/[^"]+)"');
-      if (dataUrl) {
-        var dataRef = regexFirst(html, 'data-referer="([^"]+)"') || 'https://cizgimax.online/';
-        var proxyStream = PROXY_URL + '/proxy/video?url='
-          + encodeURIComponent(dataUrl)
-          + '&referer=' + encodeURIComponent(dataRef);
-        results.push({
-          name:    'CizgiMax',
-          title:   'CizgiMax | Turkce Dublaj',
-          url:     proxyStream,
-          quality: 'Auto',
-          headers: { 'Referer': dataRef, 'User-Agent': HEADERS['User-Agent'] }
-        });
-      }
-
-      // 2. <video src="https://goproxy..."> (JS render sonrasi)
-      if (!results.length) {
-        var videoSrc = regexFirst(html, '<video[^>]+src="(https://goproxy\\.watchbuddy\\.tv/proxy/video[^"]+)"');
-        if (videoSrc) {
-          var cleanSrc = videoSrc.replace(/&amp;/g, '&');
-          var refM = /[?&]referer=([^&]+)/.exec(cleanSrc);
-          var ref  = refM ? decodeURIComponent(refM[1]) : 'https://cizgimax.online/';
-          results.push({
-            name:    'CizgiMax',
-            title:   'CizgiMax | Turkce Dublaj',
-            url:     cleanSrc,
-            quality: 'Auto',
-            headers: { 'Referer': ref, 'User-Agent': HEADERS['User-Agent'] }
-          });
+    function pump() {
+      reader.read().then(function(chunk) {
+        if (chunk.done) {
+          results = results.concat(parseStreamTokens(buffer, epUrl));
+          resolve(dedupe(results));
+          return;
         }
-      }
 
-      console.log('[CizgiMax] ' + results.length + ' stream: ' + watchUrl.slice(0, 80));
-      return results;
-    })
-    .catch(function(e) {
-      console.log('[CizgiMax] Stream hata: ' + (e.message || String(e)));
-      return [];
-    });
+        buffer += decoder.decode(chunk.value, { stream: true });
+
+        PATTERNS.forEach(function(p) {
+          var m;
+          p.re.lastIndex = 0;
+          while ((m = p.re.exec(buffer)) !== null) {
+            var fullUrl = MAIN_URL + m[0].replace(/&amp;/g, '&');
+            results.push({
+              name:    'CizgiMax',
+              title:   '⌜ CİZGİMAX ⌟ | ' + p.label,
+              url:     fullUrl,
+              quality: 'Auto',
+              headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+            });
+          }
+        });
+
+        if (results.length >= 2) {
+          reader.cancel();
+          resolve(dedupe(results));
+          return;
+        }
+
+        if (buffer.length > 32768) {
+          buffer = buffer.slice(-512);
+        }
+
+        pump();
+      }).catch(function() {
+        resolve(dedupe(results));
+      });
+    }
+
+    pump();
+  });
 }
 
-// ── Bolum izle URL olustur ────────────────────────────────────
-// contentUrl: https://cizgimax.online/diziler/boyster-izle/
-// bolumUrl:   https://cizgimax.online/boyster-1-sezon-1-bolum-izle/
-
-function buildWatchUrl(contentUrl, season, episode, title) {
-  var slugMatch = contentUrl.match(/\/diziler\/(.+?)-izle\//);
-  if (!slugMatch) return null;
-  var slug     = slugMatch[1];
-  var bolumUrl = 'https://cizgimax.online/' + slug
-    + '-' + season + '-sezon-' + episode + '-bolum-izle/';
-
-  return BASE_URL + '/izle/' + PLUGIN_NAME
-    + '?url=' + encodeURIComponent(encodeURIComponent(bolumUrl))
-    + '&baslik=' + encodeURIComponent(title || slug)
-    + '&season=' + season
-    + '&episode=' + episode;
+// ── Düz HTML'den token parse et (fallback) ───────────────────
+function parseStreamTokens(html, epUrl) {
+  var results = [];
+  var PATTERNS = [
+    { re: /\/api\/stream\/sibnet\?t=([\w\-\.]+)/g, label: 'Sibnet'  },
+    { re: /\/api\/stream\/([\w]+)\?t=([\w\-\.]+)/g, label: 'Stream' }
+  ];
+  PATTERNS.forEach(function(p) {
+    var m;
+    p.re.lastIndex = 0;
+    while ((m = p.re.exec(html)) !== null) {
+      var fullUrl = MAIN_URL + m[0].replace(/&amp;/g, '&');
+      results.push({
+        name:    'CizgiMax',
+        title:   '⌜ CİZGİMAX ⌟ | ' + p.label,
+        url:     fullUrl,
+        quality: 'Auto',
+        headers: { 'Referer': epUrl, 'User-Agent': HEADERS['User-Agent'] }
+      });
+    }
+  });
+  return results;
 }
 
-// ── Ana fonksiyon ─────────────────────────────────────────────
+// ── Duplicate URL temizle ─────────────────────────────────────
+function dedupe(arr) {
+  var seen = {};
+  return arr.filter(function(item) {
+    if (seen[item.url]) return false;
+    seen[item.url] = true;
+    return true;
+  });
+}
 
+// ── İsim İstisnaları ─────────────────────────────────────────
+function applyNameOverrides(info) {
+  var check = (info.titleEn || '').toLowerCase();
+  if (check.indexOf('chip n dale') !== -1 || check.indexOf('chip dale') !== -1) {
+    info.titleEn = 'Chip ve Dale';
+    info.titleTr = 'Chip ve Dale';
+  }
+  // Buraya başka istisnalar eklenebilir:
+  // if (check.indexOf('xxx') !== -1) { info.titleEn = 'YYY'; }
+  return info;
+}
+
+// ── Ana fonksiyon (Nuvio çağırır) ────────────────────────────
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-  var sNum = parseInt(seasonNum)  || 1;
-  var eNum = parseInt(episodeNum) || 1;
-
-  console.log('[CizgiMax] Baslatiliyor: tmdb=' + tmdbId
-    + ' tip=' + mediaType + ' S' + sNum + 'E' + eNum);
-
   return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
-      var titleEn = info.titleEn, titleTr = info.titleTr;
-      console.log('[CizgiMax] TMDB: ' + titleEn + ' / ' + titleTr);
+      if (!info.titleEn && !info.titleTr) return [];
 
-      if (!titleEn && !titleTr) {
-        console.log('[CizgiMax] TMDB baslik bos');
-        return [];
-      }
+      info = applyNameOverrides(info);
 
-      // altTitles listesindeki her isimle sırayla ara, ilk eslesende dur
-      var altTitles = info.altTitles || [titleEn, titleTr].filter(Boolean);
-      var seen = {};
-      var uniqueTitles = altTitles.filter(function(t) {
-        if (!t || seen[t]) return false;
-        seen[t] = true;
-        return true;
-      });
-
-      return uniqueTitles.reduce(function(chain, query) {
-        return chain.then(function(best) {
-          if (best) return best;
-          return searchSite(query).then(function(results) {
-            console.log('[CizgiMax] Arama (' + query + '): ' + results.length + ' sonuc');
-            return findBestMatch(results, titleEn, titleTr);
-          });
-        });
-      }, Promise.resolve(null))
-        .then(function(best) {
-          if (!best) {
-            console.log('[CizgiMax] Eslesme bulunamadi: ' + (titleEn || titleTr));
-            return [];
-          }
-          console.log('[CizgiMax] Eslesti: ' + best.name + ' -> ' + best.url);
-
-          // Icerik URL decode
-          var contentUrl;
-          var urlParam = /[?&]url=([^&]+)/.exec(best.url);
-          if (urlParam) {
-            try { contentUrl = decodeURIComponent(decodeURIComponent(urlParam[1])); }
-            catch(e) {
-              try { contentUrl = decodeURIComponent(urlParam[1]); }
-              catch(e2) { contentUrl = urlParam[1]; }
-            }
-          }
-
-          if (!contentUrl) {
-            console.log('[CizgiMax] Icerik URL parse hatasi');
-            return [];
-          }
-
-          console.log('[CizgiMax] Icerik URL: ' + contentUrl);
-
-          if (mediaType === 'movie') {
-            var movieWatchUrl = BASE_URL + '/izle/' + PLUGIN_NAME
-              + '?url=' + encodeURIComponent(encodeURIComponent(contentUrl))
-              + '&baslik=' + encodeURIComponent(best.name);
-            return fetchStreams(movieWatchUrl);
-          }
-
-          // Dizi: once buildWatchUrl dene, olmassa icerik sayfasindan bul
-          var watchUrl = buildWatchUrl(contentUrl, sNum, eNum, best.name);
-          if (watchUrl) {
-            console.log('[CizgiMax] Bolum URL: ' + watchUrl.slice(0, 100));
-            return fetchStreams(watchUrl);
-          }
-
-          // Fallback: icerik sayfasindan bolum linkini bul
-          return fetchContentPage(contentUrl)
-            .then(function(episodes) {
-              console.log('[CizgiMax] Icerik sayfasi: ' + episodes.length + ' bolum');
-              var ep = null;
-              episodes.forEach(function(e) {
-                if (e.season === sNum && e.episode === eNum) ep = e;
-              });
-              if (!ep) {
-                console.log('[CizgiMax] S' + sNum + 'E' + eNum + ' bulunamadi');
-                return [];
-              }
-              return fetchStreams(ep.watchUrl);
+      return searchSite(info.titleEn || info.titleTr)
+        .then(function(results) {
+          var best = findBestMatch(results, info.titleEn, info.titleTr);
+          if (!best && info.titleTr && info.titleTr !== info.titleEn) {
+            return searchSite(info.titleTr).then(function(r2) {
+              return findBestMatch(r2, info.titleEn, info.titleTr);
             });
+          }
+          return best;
+        })
+        .then(function(best) {
+          if (!best) return [];
+          var sNum = parseInt(seasonNum)  || 1;
+          var eNum = parseInt(episodeNum) || 1;
+          var diziUrl = best.url.startsWith('http') ? best.url : MAIN_URL + best.url;
+          var epUrl   = buildEpisodeUrl(diziUrl, sNum, eNum);
+          if (!epUrl) return [];
+          return fetchEpisodeStreams(epUrl);
         });
     })
-    .catch(function(err) {
-      console.log('[CizgiMax] Hata: ' + (err.message || String(err)));
-      return [];
-    });
+    .catch(function() { return []; });
+}
+
+// ── Poster-Gate tıklama entegrasyonu (Standalone / WebView) ──
+//
+//  Sayfanda şu yapı varsa otomatik çalışır:
+//
+//  <div class="player-wrap"
+//       data-wp-tmdb-id="12345"
+//       data-wp-media-type="tv"
+//       data-wp-season="1"
+//       data-wp-episode-no="1">
+//    <div class="cz-poster-gate" id="czPosterGate">
+//      <!-- play ikonu -->
+//    </div>
+//  </div>
+//
+//  Tıklandığında: gate gizlenir → yükleniyor gösterilir →
+//  getStreams() çağrılır → ilk link varsa otomatik oynatılır.
+// ──────────────────────────────────────────────────────────────
+function initPlayerGate(options) {
+  var opts = options || {};
+
+  // Callback'ler — dışarıdan override edilebilir
+  var onStreamsFound = opts.onStreamsFound || function(streams, playerWrap) {
+    // Varsayılan: ilk stream'i iframe olarak yerleştir
+    if (!streams.length) return onError('Stream bulunamadı.');
+    var s = streams[0];
+    var iframe = document.createElement('iframe');
+    iframe.src             = s.url;
+    iframe.allowFullscreen = true;
+    iframe.style.cssText   = 'width:100%;height:100%;border:none;display:block;';
+    playerWrap.innerHTML   = '';
+    playerWrap.appendChild(iframe);
+  };
+
+  var onLoading = opts.onLoading || function(playerWrap) {
+    playerWrap.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;'
+      + 'height:100%;color:#fff;font-family:sans-serif;font-size:14px;gap:10px;">'
+      + '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" style="animation:czSpin 1s linear infinite">'
+      + '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83'
+      + 'M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>'
+      + '</svg>Stream yükleniyor...</div>'
+      + '<style>@keyframes czSpin{to{transform:rotate(360deg)}}</style>';
+  };
+
+  var onError = opts.onError || function(msg, playerWrap) {
+    if (playerWrap) {
+      playerWrap.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;'
+        + 'height:100%;color:#f87171;font-family:sans-serif;font-size:14px;">'
+        + '⚠ ' + msg + '</div>';
+    }
+  };
+
+  var gate = document.getElementById('czPosterGate');
+  if (!gate) return;
+
+  var playerWrap = gate.closest('.player-wrap') || gate.parentElement;
+
+  // data-wp-* attribute'larını oku
+  var tmdbId    = playerWrap.dataset.wpTmdbId    || opts.tmdbId;
+  var mediaType = playerWrap.dataset.wpMediaType || opts.mediaType || 'tv';
+  var season    = playerWrap.dataset.wpSeason    || opts.season    || '1';
+  var episode   = playerWrap.dataset.wpEpisodeNo || opts.episode   || '1';
+
+  gate.style.cursor = 'pointer';
+
+  gate.addEventListener('click', function onGateClick() {
+    gate.removeEventListener('click', onGateClick); // tek seferlik
+    onLoading(playerWrap);
+
+    getStreams(tmdbId, mediaType, season, episode)
+      .then(function(streams) {
+        onStreamsFound(streams, playerWrap);
+      })
+      .catch(function(err) {
+        onError('Bağlantı hatası: ' + (err && err.message || err), playerWrap);
+      });
+  });
 }
 
 // ── Export ────────────────────────────────────────────────────
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getStreams: getStreams };
+  module.exports = { getStreams: getStreams, initPlayerGate: initPlayerGate };
 } else {
-  global.getStreams = getStreams;
+  (typeof globalThis !== 'undefined' ? globalThis : window).getStreams    = getStreams;
+  (typeof globalThis !== 'undefined' ? globalThis : window).initPlayerGate = initPlayerGate;
 }
