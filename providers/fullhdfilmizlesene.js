@@ -7,7 +7,7 @@ var cheerio = require('cheerio-without-node-native');
 // ─── Sabitler ─────────────────────────────────────────────────────────────────
 
 var DOMAIN_LIST_URL = 'https://raw.githubusercontent.com/Kraptor123/domainListesi/refs/heads/main/eklenti_domainleri.txt';
-var FALLBACK_URL    = 'https://www.fullhdfilmizlesene.life';
+var FALLBACK_URL    = 'https://www.fullhdfilmizlesene.nz';
 var TMDB_KEY        = '4ef0d7355d9ffb5151e987764708ce96';
 var CACHE_MS        = 60 * 60 * 1000; // 1 saat
 
